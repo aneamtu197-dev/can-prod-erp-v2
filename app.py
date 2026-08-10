@@ -330,6 +330,24 @@ def import_mrpeasy_items(df):
     conn.close()
     return imported_count, updated_count
 
+# CALLBACK FUNCTIONS FOR RESETTING FILTERS (PREVENTS STREAMLIT API EXCEPTION)
+def reset_raw_filters_callback():
+    st.session_state["f_raw_code"] = ""
+    st.session_state["f_raw_name"] = ""
+    st.session_state["f_raw_sub"] = "All Sub-Groups"
+    st.session_state["f_raw_supp"] = "All Suppliers"
+    st.session_state["f_raw_uom"] = "All UoMs"
+
+def reset_buy_filters_callback():
+    st.session_state["f_buy_code"] = ""
+    st.session_state["f_buy_name"] = ""
+    st.session_state["f_buy_supp"] = "All Suppliers"
+
+def reset_fg_filters_callback():
+    st.session_state["f_fg_code"] = ""
+    st.session_state["f_fg_name"] = ""
+    st.session_state["f_fg_cat"] = "All Categories"
+
 # 3. Query Parameters Navigation
 query_params = st.query_params
 active_page = query_params.get("page", "Home")
@@ -753,13 +771,7 @@ elif active_page == "Stock":
         with col_f6:
             st.write("")
             st.write("")
-            if st.button("🔄 Reset Filters", use_container_width=True, key="reset_raw_filters"):
-                st.session_state["f_raw_code"] = ""
-                st.session_state["f_raw_name"] = ""
-                st.session_state["f_raw_sub"] = "All Sub-Groups"
-                st.session_state["f_raw_supp"] = "All Suppliers"
-                st.session_state["f_raw_uom"] = "All UoMs"
-                st.rerun()
+            st.button("🔄 Reset Filters", use_container_width=True, key="reset_raw_filters", on_click=reset_raw_filters_callback)
 
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -884,11 +896,7 @@ elif active_page == "Stock":
         with col_b4:
             st.write("")
             st.write("")
-            if st.button("🔄 Reset Filters", use_container_width=True, key="reset_buy_filters"):
-                st.session_state["f_buy_code"] = ""
-                st.session_state["f_buy_name"] = ""
-                st.session_state["f_buy_supp"] = "All Suppliers"
-                st.rerun()
+            st.button("🔄 Reset Filters", use_container_width=True, key="reset_buy_filters", on_click=reset_buy_filters_callback)
 
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -983,11 +991,7 @@ elif active_page == "Stock":
         with col_fg4:
             st.write("")
             st.write("")
-            if st.button("🔄 Reset Filters", use_container_width=True, key="reset_fg_filters"):
-                st.session_state["f_fg_code"] = ""
-                st.session_state["f_fg_name"] = ""
-                st.session_state["f_fg_cat"] = "All Categories"
-                st.rerun()
+            st.button("🔄 Reset Filters", use_container_width=True, key="reset_fg_filters", on_click=reset_fg_filters_callback)
 
         st.markdown('</div>', unsafe_allow_html=True)
 
