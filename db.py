@@ -3,7 +3,7 @@ import pandas as pd
 import re
 
 def init_custom_db():
-    # Permitem accesul Multi-Thread pentru a rezolva eroarea din Pop-Up-uri (st.dialog)
+    # Permitem accesul Multi-Thread pentru a rezolva eroarea din Pop-Up-uri
     conn = sqlite3.connect('can_prod_v2.db', check_same_thread=False)
     cursor = conn.cursor()
     
@@ -12,6 +12,7 @@ def init_custom_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         code VARCHAR(50) UNIQUE NOT NULL,
         name VARCHAR(255) NOT NULL,
+        supplier_type VARCHAR(100) DEFAULT 'Raw Material Supplier',
         contact_person VARCHAR(255),
         phone VARCHAR(100),
         email VARCHAR(255),
@@ -59,20 +60,17 @@ def init_custom_db():
     );
     """)
 
+    # AUTO-REPAIR SCHEMA FOR STOCK ITEMS
     cursor.execute("PRAGMA table_info(stock_items)")
     existing_cols = [col[1] for col in cursor.fetchall()]
-    
-    missing_cols = {
-        'uniq_code': "VARCHAR(100)",
-        'sub_group': "VARCHAR(100) DEFAULT 'General'",
-        'selling_price': "REAL DEFAULT 0.0",
-        'specific_weight': "REAL DEFAULT 0.0",
-        'weight_unit': "VARCHAR(20) DEFAULT 'kg'"
-    }
-    
-    for col_name, col_type in missing_cols.items():
+    for col_name, col_type in {'uniq_code': "VARCHAR(100)", 'sub_group': "VARCHAR(100) DEFAULT 'General'", 'selling_price': "REAL DEFAULT 0.0", 'specific_weight': "REAL DEFAULT 0.0", 'weight_unit': "VARCHAR(20) DEFAULT 'kg'"}.items():
         if col_name not in existing_cols:
             cursor.execute(f"ALTER TABLE stock_items ADD COLUMN {col_name} {col_type}")
+
+    # AUTO-REPAIR SCHEMA FOR SUPPLIERS
+    cursor.execute("PRAGMA table_info(suppliers)")
+    if 'supplier_type' not in [col[1] for col in cursor.fetchall()]:
+        cursor.execute("ALTER TABLE suppliers ADD COLUMN supplier_type VARCHAR(100) DEFAULT 'Raw Material Supplier'")
 
     cursor.execute("SELECT COUNT(*) FROM units")
     if cursor.fetchone()[0] == 0:
@@ -86,8 +84,8 @@ def init_custom_db():
 
     cursor.execute("SELECT COUNT(*) FROM suppliers")
     if cursor.fetchone()[0] == 0:
-        for c, n, cp, p, e, lt in [('SUP001', 'Baurom Construct SRL', 'John Smith', '+40722111222', 'orders@baurom.ro', 3), ('SUP002', 'LemnConfex SRL', 'Mary Doe', '+40733444555', 'sales@lemnconfex.ro', 5)]:
-            cursor.execute("INSERT INTO suppliers (code, name, contact_person, phone, email, lead_time_days) VALUES (?, ?, ?, ?, ?, ?)", (c, n, cp, p, e, lt))
+        for c, n, stype, cp, p, e, lt in [('SUP001', 'Baurom Construct SRL', 'Raw Material Supplier', 'John Smith', '+40722111222', 'orders@baurom.ro', 3), ('SUP002', 'LemnConfex SRL', 'Buy Parts Supplier', 'Mary Doe', '+40733444555', 'sales@lemnconfex.ro', 5)]:
+            cursor.execute("INSERT INTO suppliers (code, name, supplier_type, contact_person, phone, email, lead_time_days) VALUES (?, ?, ?, ?, ?, ?, ?)", (c, n, stype, cp, p, e, lt))
 
     conn.commit()
     populate_missing_uniq_codes(conn)
@@ -128,7 +126,6 @@ def populate_missing_uniq_codes(conn):
     conn.commit()
 
 def get_db():
-    # Permitem accesul Multi-Thread aici de asemenea
     return sqlite3.connect('can_prod_v2.db', check_same_thread=False)
 
 def generate_unique_item_code(conn, category, sub_group=""):
@@ -243,7 +240,7 @@ def import_mrpeasy_items(df):
         if v_name and v_name != 'nan':
             cursor.execute("SELECT id FROM suppliers WHERE name = ?", (v_name,))
             s_row = cursor.fetchone()
-            supplier_id = s_row[0] if s_row else cursor.execute("INSERT INTO suppliers (code, name) VALUES (?, ?)", (f"SUP-{v_name[:5].upper()}", v_name)).lastrowid
+            supplier_id = s_row[0] if s_row else cursor.execute("INSERT INTO suppliers (code, name, supplier_type) VALUES (?, ?, ?)", (f"SUP-{v_name[:5].upper()}", v_name, "General / Both")).lastrowid
 
         price = safe_float(row.get('cost', 0))
         sell_price = safe_float(row.get('selling price', 0))
