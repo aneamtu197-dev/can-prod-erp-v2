@@ -25,28 +25,30 @@ conn = get_db()
 def fetch_anaf_data(cui):
     try:
         clean_cui = ''.join(filter(str.isdigit, str(cui)))
-        if not clean_cui: return None, "CUI invalid (conține doar litere)."
+        if not clean_cui: return None, "CUI invalid (conține doar cifre)."
         
         today = datetime.now().strftime("%Y-%m-%d")
-        url = "https://webservicesp.anaf.ro/PlatitorTvaRest/api/v8/ws/tva"
         payload = [{"cui": int(clean_cui), "data": today}]
         headers = {"Content-Type": "application/json"}
         
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
+        # Caută automat prin versiunile ANAF disponibile (v9, v8, v7)
+        for version in ["v9", "v8", "v7"]:
+            url = f"https://webservicesp.anaf.ro/PlatitorTvaRest/api/{version}/ws/tva"
+            response = requests.post(url, json=payload, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('cod') == 200 and data.get('found') and len(data.get('found')) > 0:
+                    company = data['found'][0]
+                    return {
+                        'name': company.get('denumire', ''),
+                        'address': company.get('adresa', ''),
+                        'reg_com': company.get('nrRegCom', '')
+                    }, None
+                else:
+                    return None, "CUI-ul nu a fost găsit în baza de date ANAF."
         
-        if response.status_code == 200:
-            data = response.json()
-            if data.get('cod') == 200 and data.get('found') and len(data.get('found')) > 0:
-                company = data['found'][0]
-                return {
-                    'name': company.get('denumire', ''),
-                    'address': company.get('adresa', ''),
-                    'reg_com': company.get('nrRegCom', '')
-                }, None
-            else:
-                return None, "CUI-ul nu a fost găsit în baza de date ANAF."
-        else:
-            return None, f"Eroare server ANAF (Cod: {response.status_code})"
+        return None, f"Eroare server ANAF (Cod: {response.status_code})"
     except Exception as e:
         return None, f"Eroare de conexiune la server: {str(e)}"
 
