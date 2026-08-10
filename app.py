@@ -48,7 +48,7 @@ def init_custom_db():
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS stock_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        uniq_code VARCHAR(100) UNIQUE NOT NULL,
+        uniq_code VARCHAR(100),
         code VARCHAR(100) NOT NULL,
         name VARCHAR(255) NOT NULL,
         category VARCHAR(50) DEFAULT 'RAW MATERIAL',
@@ -103,7 +103,53 @@ def init_custom_db():
             cursor.execute("INSERT INTO suppliers (code, name, contact_person, phone, email, lead_time_days) VALUES (?, ?, ?, ?, ?, ?)", (c, n, cp, p, e, lt))
 
     conn.commit()
+
+    # AUTO-POPULATE UNIQ_CODE FOR EXISTING IMPORTED ITEMS WITHOUT CODES
+    populate_missing_uniq_codes(conn)
     conn.close()
+
+# Automatic Migration to assign uniq_codes to already imported items
+def populate_missing_uniq_codes(conn):
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, code, category, sub_group FROM stock_items WHERE uniq_code IS NULL OR uniq_code = '' OR uniq_code = 'nan'")
+    rows = cursor.fetchall()
+    
+    for item_id, code, category, sub_group in rows:
+        cat_upper = str(category).upper() if category else 'RAW MATERIAL'
+        sg = str(sub_group) if sub_group else ''
+        
+        if 'RAW' in cat_upper:
+            if sg == 'Tabla': prefix = 'RM-TB-'
+            elif sg == 'Teava': prefix = 'RM-TV-'
+            elif sg == 'Europrofile': prefix = 'RM-EP-'
+            else: prefix = 'RM-GEN-'
+        elif 'BUY' in cat_upper:
+            prefix = 'BP-'
+        elif 'FINISHED' in cat_upper or 'SUB' in cat_upper or 'PRODUSE' in cat_upper:
+            prefix = 'A0'
+        else:
+            prefix = 'ITM-'
+
+        cursor.execute("SELECT uniq_code, code FROM stock_items WHERE (uniq_code LIKE ? OR code LIKE ?) AND id != ?", (f"{prefix}%", f"{prefix}%", item_id))
+        existing_records = cursor.fetchall()
+        
+        max_num = 0
+        for (uc, c_val) in existing_records:
+            for check_val in [uc, c_val]:
+                if check_val and check_val.startswith(prefix):
+                    num_part = check_val.replace(prefix, '')
+                    if num_part.isdigit():
+                        max_num = max(max_num, int(num_part))
+        
+        if code and code.startswith('A0') and cat_upper in ['FINISHED GOOD', 'PRODUSE FINITE']:
+            new_code = code
+        else:
+            next_num = max_num + 1 if max_num > 0 else (1834 if prefix == 'A0' else 1)
+            new_code = f"A0{next_num:04d}" if prefix == 'A0' else f"{prefix}{next_num:04d}"
+
+        cursor.execute("UPDATE stock_items SET uniq_code = ? WHERE id = ?", (new_code, item_id))
+    
+    conn.commit()
 
 init_custom_db()
 
@@ -690,6 +736,102 @@ def add_new_item_dialog():
             else:
                 st.warning("Please fill in Uniq Code and Name!")
 
+# DIALOG MODAL POP-UP PENTRU EDITARE ȘI ȘTERGERE ITEM EXISTENT
+@st.dialog("✏️ Edit Item Details")
+def edit_item_dialog(item_id):
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM stock_items WHERE id = ?", (item_id,))
+    row = cursor.fetchone()
+    
+    if row:
+        # Map DB row fields
+        i_uniq = row[1] if row[1] else ""
+        i_code = row[2] if row[2] else ""
+        i_name = row[3] if row[3] else ""
+        i_cat = row[4] if row[4] else "RAW MATERIAL"
+        i_sub = row[5] if row[5] else "General"
+        i_supp_id = row[6]
+        i_unit_id = row[7]
+        i_wh_id = row[8]
+        i_pprice = float(row[9]) if row[9] else 0.0
+        i_sprice = float(row[10]) if row[10] else 0.0
+        i_sweight = float(row[11]) if row[11] else 0.0
+        i_wunit = row[12] if row[12] else "kg"
+        i_stock = float(row[13]) if row[13] else 0.0
+        i_minstock = float(row[14]) if row[14] else 0.0
+
+        st.caption(f"Editing Item ID: #{item_id} | Uniq Code: **{i_uniq}**")
+
+        with st.form("edit_item_form"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                e_uniq = st.text_input("Uniq Code *", value=i_uniq)
+                e_code = st.text_input("Part No. / Item Code *", value=i_code)
+                e_name = st.text_input("Part Description / Name *", value=i_name)
+                
+                if i_cat == "RAW MATERIAL":
+                    sub_opts = ["Tabla", "Teava", "Europrofile", "Raw Materials Diverse"]
+                    e_sub = st.selectbox("Sub-Group *", sub_opts, index=sub_opts.index(i_sub) if i_sub in sub_opts else 0)
+                else:
+                    e_sub = i_sub
+
+                df_u_opts = pd.read_sql_query("SELECT id, code, name FROM units ORDER BY code", conn)
+                u_dict = {f"{r['code']} ({r['name']})": r['id'] for _, r in df_u_opts.iterrows()}
+                u_keys = list(u_dict.keys())
+                u_index = [idx for idx, k in enumerate(u_keys) if u_dict[k] == i_unit_id]
+                selected_u = st.selectbox("Unit of Measure (UoM) *", u_keys, index=u_index[0] if u_index else 0)
+
+                df_s_opts = pd.read_sql_query("SELECT id, name FROM suppliers ORDER BY name", conn)
+                s_dict = {r['name']: r['id'] for _, r in df_s_opts.iterrows()}
+                s_keys = ["No Supplier"] + list(s_dict.keys())
+                s_curr = [k for k, v in s_dict.items() if v == i_supp_id]
+                selected_s = st.selectbox("Preferred Supplier", s_keys, index=s_keys.index(s_curr[0]) if s_curr else 0)
+
+            with col2:
+                e_pprice = st.number_input("Purchase Price (€)", min_value=0.0, value=i_pprice, step=0.1)
+                e_sprice = st.number_input("Selling Price (€)", min_value=0.0, value=i_sprice, step=0.1)
+                
+                col_w1, col_w2 = st.columns([2, 1])
+                with col_w1:
+                    e_sweight = st.number_input("Specific Weight / Unit", min_value=0.0, value=i_sweight, step=0.1)
+                with col_w2:
+                    w_opts = ["kg", "lbs", "g"]
+                    e_wunit = st.selectbox("Weight Unit", w_opts, index=w_opts.index(i_wunit) if i_wunit in w_opts else 0)
+
+                df_w_opts = pd.read_sql_query("SELECT id, name FROM warehouses ORDER BY name", conn)
+                w_dict = {r['name']: r['id'] for _, r in df_w_opts.iterrows()}
+                w_keys = list(w_dict.keys())
+                w_curr = [k for k, v in w_dict.items() if v == i_wh_id]
+                selected_w = st.selectbox("Storage Warehouse Location", w_keys, index=w_keys.index(w_curr[0]) if w_curr else 0)
+
+                e_stock = st.number_input("Current Stock Quantity", min_value=0.0, value=i_stock)
+                e_minstock = st.number_input("Reorder Point / Min Stock", min_value=0.0, value=i_minstock)
+
+            st.divider()
+            c_save, c_del = st.columns([8, 2])
+            with c_save:
+                submit_save = st.form_submit_button("💾 Save Changes", type="primary", use_container_width=True)
+            with c_del:
+                submit_del = st.form_submit_button("🗑️ Delete", use_container_width=True)
+
+            if submit_save:
+                cursor.execute("""
+                    UPDATE stock_items SET 
+                    uniq_code=?, code=?, name=?, sub_group=?, supplier_id=?, unit_id=?, warehouse_id=?,
+                    purchase_price=?, selling_price=?, specific_weight=?, weight_unit=?, current_stock=?, min_stock=?
+                    WHERE id=?
+                """, (e_uniq.strip(), e_code.strip(), e_name.strip(), e_sub, s_dict.get(selected_s), u_dict.get(selected_u), w_dict.get(selected_w), e_pprice, e_sprice, e_sweight, e_wunit, e_stock, e_minstock, item_id))
+                conn.commit()
+                st.success("Item updated successfully!")
+                st.rerun()
+
+            if submit_del:
+                cursor.execute("DELETE FROM stock_items WHERE id = ?", (item_id,))
+                conn.commit()
+                st.success("Item deleted!")
+                st.rerun()
+
 # ==========================================
 # 1. HOME SCREEN (LAUNCHPAD)
 # ==========================================
@@ -890,19 +1032,28 @@ elif active_page == "Stock":
         q_raw += " ORDER BY si.sub_group, si.uniq_code"
 
         df_raw = pd.read_sql_query(q_raw, conn, params=params_raw)
-        st.dataframe(
-            df_raw, 
-            use_container_width=True, 
-            hide_index=True,
-            column_config={
-                "Uniq Code": st.column_config.TextColumn("Uniq Code", help="Generated Unique Item Identifier"),
-                "Purchase Price (€)": st.column_config.NumberColumn("Purchase Price (€)", format="%.2f €"),
-                "Selling Price (€)": st.column_config.NumberColumn("Selling Price (€)", format="%.2f €"),
-                "Spec. Weight (kg/UoM)": st.column_config.NumberColumn("Spec. Weight", format="%.2f kg"),
-                "In Stock": st.column_config.NumberColumn("In Stock", format="%.2f"),
-                "Reorder Point": st.column_config.NumberColumn("Reorder Point", format="%.2f")
-            }
-        )
+        
+        # Display Table with Actions Column
+        col_tb, col_act = st.columns([9.2, 0.8])
+        with col_tb:
+            st.dataframe(
+                df_raw, 
+                use_container_width=True, 
+                hide_index=True,
+                column_config={
+                    "Uniq Code": st.column_config.TextColumn("Uniq Code", help="Generated Unique Item Identifier"),
+                    "Purchase Price (€)": st.column_config.NumberColumn("Purchase Price (€)", format="%.2f €"),
+                    "Selling Price (€)": st.column_config.NumberColumn("Selling Price (€)", format="%.2f €"),
+                    "Spec. Weight (kg/UoM)": st.column_config.NumberColumn("Spec. Weight", format="%.2f kg"),
+                    "In Stock": st.column_config.NumberColumn("In Stock", format="%.2f"),
+                    "Reorder Point": st.column_config.NumberColumn("Reorder Point", format="%.2f")
+                }
+            )
+        with col_act:
+            st.caption("Action")
+            for idx, r in df_raw.iterrows():
+                if st.button("✏️", key=f"edit_raw_{r['ID']}", help="Edit Item Details"):
+                    edit_item_dialog(r['ID'])
 
     # --- TAB 2: BUY PARTS ---
     elif active_subtab == "Buy_Parts":
@@ -971,7 +1122,15 @@ elif active_page == "Stock":
             params_buy.append(f_buy_supp)
 
         df_buy = pd.read_sql_query(q_buy, conn, params=params_buy)
-        st.dataframe(df_buy, use_container_width=True, hide_index=True)
+        
+        col_tb, col_act = st.columns([9.2, 0.8])
+        with col_tb:
+            st.dataframe(df_buy, use_container_width=True, hide_index=True)
+        with col_act:
+            st.caption("Action")
+            for idx, r in df_buy.iterrows():
+                if st.button("✏️", key=f"edit_buy_{r['ID']}", help="Edit Item Details"):
+                    edit_item_dialog(r['ID'])
 
     # --- TAB 3: FINISHED GOODS ---
     elif active_subtab == "Finished_Goods":
@@ -1036,7 +1195,15 @@ elif active_page == "Stock":
             params_fin.append(f_fg_cat)
 
         df_fin = pd.read_sql_query(q_fin, conn, params=params_fin)
-        st.dataframe(df_fin, use_container_width=True, hide_index=True)
+        
+        col_tb, col_act = st.columns([9.2, 0.8])
+        with col_tb:
+            st.dataframe(df_fin, use_container_width=True, hide_index=True)
+        with col_act:
+            st.caption("Action")
+            for idx, r in df_fin.iterrows():
+                if st.button("✏️", key=f"edit_fg_{r['ID']}", help="Edit Item Details"):
+                    edit_item_dialog(r['ID'])
 
     # --- TAB 4: SUPPLIERS ---
     elif active_subtab == "Suppliers":
