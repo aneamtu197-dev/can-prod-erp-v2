@@ -16,17 +16,16 @@ st.set_page_config(page_title="CAN Prod ERP Custom", layout="wide", initial_side
 init_custom_db()
 load_css()
 
-# Inject Custom CSS for Draggable/Resizable Dialog Modals
+# Inject Custom CSS for Resizable & Wide Dialog Modals
 st.markdown("""
 <style>
     div[data-testid="stDialog"] > div {
         resize: both !important;
         overflow: auto !important;
-        min-width: 600px !important;
-        min-height: 400px !important;
-    }
-    div[data-testid="stDialog"] > div > div:first-child {
-        cursor: move;
+        min-width: 80vw !important;
+        max-width: 95vw !important;
+        min-height: 70vh !important;
+        margin: auto !important;
     }
 </style>
 """, unsafe_allow_html=True)
