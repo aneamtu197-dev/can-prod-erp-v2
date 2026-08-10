@@ -400,7 +400,6 @@ def import_mrpeasy_items(df):
     conn.close()
     return imported_count, updated_count
 
-# SAFE FLOAT PARSER TO PREVENT VALUE ERRORS
 def safe_float(val):
     if val in (None, "", "nan", "NaN"): 
         return 0.0
@@ -432,12 +431,13 @@ query_params = st.query_params
 active_page = query_params.get("page", "Home")
 active_subtab = query_params.get("subtab", "Raw_Materials")
 
-# 4. Aqua Minimalist Styling
+# 4. Aqua Minimalist Styling With 3D Big Buttons
 st.markdown("""
 <style>
     .stApp { background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     [data-testid="stSidebar"] { display: none; }
 
+    /* Header Bar */
     .top-header {
         background: linear-gradient(135deg, #0284c7 0%, #06b6d4 100%);
         color: #ffffff;
@@ -451,6 +451,7 @@ st.markdown("""
     }
     .top-header h3 { margin: 0; font-size: 20px; font-weight: 800; color: #ffffff; }
 
+    /* Navigation Bar */
     .mrp-nav-bar {
         display: flex;
         background-color: #f1f5f9;
@@ -484,6 +485,11 @@ st.markdown("""
         color: #0284c7;
     }
 
+    .mrp-nav-item:active {
+        transform: translateY(2px);
+        box-shadow: 0 2px 0 #0284c7, 0 3px 4px rgba(0, 0, 0, 0.1);
+    }
+
     .mrp-nav-active {
         background: linear-gradient(180deg, #0284c7 0%, #0369a1 100%) !important;
         color: #ffffff !important;
@@ -491,6 +497,7 @@ st.markdown("""
         box-shadow: 0 4px 0 #075985, 0 6px 10px rgba(2, 132, 199, 0.3) !important;
     }
 
+    /* Sub-tabs with 3D effect */
     .mrp-subtabs {
         display: flex;
         gap: 12px;
@@ -526,6 +533,7 @@ st.markdown("""
         box-shadow: 0 3px 0 #0369a1, 0 4px 8px rgba(14, 165, 233, 0.25) !important;
     }
 
+    /* KPI Metric Cards */
     .stock-kpi-grid {
         display: grid;
         grid-template-columns: repeat(4, 1fr);
@@ -564,6 +572,7 @@ st.markdown("""
         text-transform: uppercase;
     }
 
+    /* Table Filter Box Container */
     .filter-panel {
         background-color: #ffffff;
         border: 1px solid #e2e8f0;
@@ -573,6 +582,7 @@ st.markdown("""
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
     }
 
+    /* Launchpad Cards */
     .launchpad-grid {
         display: grid;
         grid-template-columns: repeat(4, 1fr);
@@ -969,8 +979,7 @@ elif active_page == "Stock":
                 u.code as 'UoM',
                 si.specific_weight as 'Spec. Weight',
                 si.purchase_price as 'Purchase Price (€)',
-                si.current_stock as 'In Stock',
-                si.min_stock as 'Reorder Point'
+                si.selling_price as 'Selling Price (€)'
             FROM stock_items si
             LEFT JOIN suppliers s ON si.supplier_id = s.id
             LEFT JOIN units u ON si.unit_id = u.id
@@ -1003,31 +1012,27 @@ elif active_page == "Stock":
 
         df_raw = pd.read_sql_query(q_raw, conn, params=params_raw)
         
-        # EDIT ITEM SELECTOR (ABOVE TABLE)
-        col_edit1, col_edit2 = st.columns([3, 9])
-        with col_edit1:
-            raw_options = ["-- Select Item to Edit --"] + (df_raw['Uniq Code'].astype(str) + " - " + df_raw['Part Description'].astype(str)).tolist()
-            edit_target = st.selectbox("✏️ Edit / Delete an Item:", raw_options, key="edit_raw_sel")
-        with col_edit2:
-            st.write("")
-            st.write("")
-            if edit_target != "-- Select Item to Edit --":
-                target_uniq = edit_target.split(" - ")[0]
-                target_id = int(df_raw[df_raw['Uniq Code'] == target_uniq]['ID'].iloc[0])
-                if st.button("Open Edit Panel", type="primary", key="btn_edit_raw"):
-                    edit_item_dialog(target_id)
-
-        st.dataframe(
+        # Interactive Table (Click to Edit)
+        st.caption("💡 Click on any row below to edit the item details.")
+        selection = st.dataframe(
             df_raw, 
             use_container_width=True, 
             hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            key="raw_items_table",
             column_config={
+                "ID": None, # Hides the ID column visually
                 "Purchase Price (€)": st.column_config.NumberColumn("Purchase Price (€)", format="%.2f €"),
-                "Spec. Weight": st.column_config.NumberColumn("Spec. Weight", format="%.2f"),
-                "In Stock": st.column_config.NumberColumn("In Stock", format="%.2f"),
-                "Reorder Point": st.column_config.NumberColumn("Reorder Point", format="%.2f")
+                "Selling Price (€)": st.column_config.NumberColumn("Selling Price (€)", format="%.2f €"),
+                "Spec. Weight": st.column_config.NumberColumn("Spec. Weight", format="%.2f")
             }
         )
+
+        if selection and len(selection.selection.rows) > 0:
+            selected_idx = selection.selection.rows[0]
+            target_id = int(df_raw.iloc[selected_idx]['ID'])
+            edit_item_dialog(target_id)
 
     # --- TAB 2: BUY PARTS ---
     elif active_subtab == "Buy_Parts":
@@ -1070,8 +1075,9 @@ elif active_page == "Stock":
                 si.name as 'Part Description',
                 s.name as 'Preferred Supplier',
                 u.code as 'UoM',
+                w.name as 'Warehouse',
                 si.purchase_price as 'Purchase Price (€)',
-                si.current_stock as 'In Stock'
+                si.selling_price as 'Selling Price (€)'
             FROM stock_items si
             LEFT JOIN suppliers s ON si.supplier_id = s.id
             LEFT JOIN units u ON si.unit_id = u.id
@@ -1094,21 +1100,25 @@ elif active_page == "Stock":
 
         df_buy = pd.read_sql_query(q_buy, conn, params=params_buy)
         
-        # EDIT ITEM SELECTOR (ABOVE TABLE)
-        col_edit1, col_edit2 = st.columns([3, 9])
-        with col_edit1:
-            buy_options = ["-- Select Item to Edit --"] + (df_buy['Uniq Code'].astype(str) + " - " + df_buy['Part Description'].astype(str)).tolist()
-            edit_target = st.selectbox("✏️ Edit / Delete an Item:", buy_options, key="edit_buy_sel")
-        with col_edit2:
-            st.write("")
-            st.write("")
-            if edit_target != "-- Select Item to Edit --":
-                target_uniq = edit_target.split(" - ")[0]
-                target_id = int(df_buy[df_buy['Uniq Code'] == target_uniq]['ID'].iloc[0])
-                if st.button("Open Edit Panel", type="primary", key="btn_edit_buy"):
-                    edit_item_dialog(target_id)
+        st.caption("💡 Click on any row below to edit the item details.")
+        selection = st.dataframe(
+            df_buy, 
+            use_container_width=True, 
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            key="buy_items_table",
+            column_config={
+                "ID": None,
+                "Purchase Price (€)": st.column_config.NumberColumn("Purchase Price (€)", format="%.2f €"),
+                "Selling Price (€)": st.column_config.NumberColumn("Selling Price (€)", format="%.2f €")
+            }
+        )
 
-        st.dataframe(df_buy, use_container_width=True, hide_index=True)
+        if selection and len(selection.selection.rows) > 0:
+            selected_idx = selection.selection.rows[0]
+            target_id = int(df_buy.iloc[selected_idx]['ID'])
+            edit_item_dialog(target_id)
 
     # --- TAB 3: FINISHED GOODS ---
     elif active_subtab == "Finished_Goods":
@@ -1149,8 +1159,8 @@ elif active_page == "Stock":
                 si.name as 'Product Description',
                 si.category as 'Category',
                 u.code as 'UoM',
-                si.selling_price as 'Selling Price (€)',
-                si.current_stock as 'In Stock'
+                w.name as 'Warehouse',
+                si.selling_price as 'Selling Price (€)'
             FROM stock_items si
             LEFT JOIN units u ON si.unit_id = u.id
             LEFT JOIN warehouses w ON si.warehouse_id = w.id
@@ -1172,21 +1182,24 @@ elif active_page == "Stock":
 
         df_fin = pd.read_sql_query(q_fin, conn, params=params_fin)
         
-        # EDIT ITEM SELECTOR (ABOVE TABLE)
-        col_edit1, col_edit2 = st.columns([3, 9])
-        with col_edit1:
-            fg_options = ["-- Select Item to Edit --"] + (df_fin['Uniq Code'].astype(str) + " - " + df_fin['Product Description'].astype(str)).tolist()
-            edit_target = st.selectbox("✏️ Edit / Delete an Item:", fg_options, key="edit_fg_sel")
-        with col_edit2:
-            st.write("")
-            st.write("")
-            if edit_target != "-- Select Item to Edit --":
-                target_uniq = edit_target.split(" - ")[0]
-                target_id = int(df_fin[df_fin['Uniq Code'] == target_uniq]['ID'].iloc[0])
-                if st.button("Open Edit Panel", type="primary", key="btn_edit_fg"):
-                    edit_item_dialog(target_id)
+        st.caption("💡 Click on any row below to edit the item details.")
+        selection = st.dataframe(
+            df_fin, 
+            use_container_width=True, 
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            key="fg_items_table",
+            column_config={
+                "ID": None,
+                "Selling Price (€)": st.column_config.NumberColumn("Selling Price (€)", format="%.2f €")
+            }
+        )
 
-        st.dataframe(df_fin, use_container_width=True, hide_index=True)
+        if selection and len(selection.selection.rows) > 0:
+            selected_idx = selection.selection.rows[0]
+            target_id = int(df_fin.iloc[selected_idx]['ID'])
+            edit_item_dialog(target_id)
 
     # --- TAB 4: SUPPLIERS ---
     elif active_subtab == "Suppliers":
