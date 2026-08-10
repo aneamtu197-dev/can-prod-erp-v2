@@ -66,12 +66,10 @@ def generate_bom_pdf(prod_code, prod_name, cust_name, weight, df_materials, tot_
     pdf.alias_nb_pages()
     pdf.add_page()
     
-    # Title
     pdf.set_font('Helvetica', 'B', 12)
     pdf.cell(0, 8, f'BON DE CONSUM MATERIALE - {prod_code}', 0, 1, 'L')
     pdf.ln(2)
     
-    # Metadata Box
     pdf.set_font('Helvetica', '', 10)
     pdf.cell(40, 6, 'Denumire Produs:', 0, 0)
     pdf.cell(100, 6, str(prod_name), 0, 1)
@@ -81,7 +79,6 @@ def generate_bom_pdf(prod_code, prod_name, cust_name, weight, df_materials, tot_
     pdf.cell(100, 6, f'{weight:.2f} kg', 0, 1)
     pdf.ln(5)
     
-    # Table Header
     pdf.set_fill_color(230, 230, 230)
     pdf.set_font('Helvetica', 'B', 9)
     pdf.cell(25, 7, 'Cod', 1, 0, 'C', True)
@@ -90,7 +87,6 @@ def generate_bom_pdf(prod_code, prod_name, cust_name, weight, df_materials, tot_
     pdf.cell(25, 7, 'Pret Unit. (EUR)', 1, 0, 'R', True)
     pdf.cell(30, 7, 'Total (EUR)', 1, 1, 'R', True)
     
-    # Table Rows
     pdf.set_font('Helvetica', '', 9)
     for _, r in df_materials.iterrows():
         code_str = str(r.get('Code', ''))[:12]
@@ -119,12 +115,10 @@ def generate_routing_pdf(prod_code, prod_name, cust_name, df_ops, tot_lab_cost):
     pdf.alias_nb_pages()
     pdf.add_page()
     
-    # Title
     pdf.set_font('Helvetica', 'B', 12)
     pdf.cell(0, 8, f'FISA TEHNOLOGICA DE OPERATII (ROUTING) - {prod_code}', 0, 1, 'L')
     pdf.ln(2)
     
-    # Metadata Box
     pdf.set_font('Helvetica', '', 10)
     pdf.cell(40, 6, 'Denumire Produs:', 0, 0)
     pdf.cell(100, 6, str(prod_name), 0, 1)
@@ -132,7 +126,6 @@ def generate_routing_pdf(prod_code, prod_name, cust_name, df_ops, tot_lab_cost):
     pdf.cell(100, 6, str(cust_name), 0, 1)
     pdf.ln(5)
     
-    # Table Header
     pdf.set_fill_color(230, 230, 230)
     pdf.set_font('Helvetica', 'B', 9)
     pdf.cell(15, 7, 'Pas', 1, 0, 'C', True)
@@ -142,7 +135,6 @@ def generate_routing_pdf(prod_code, prod_name, cust_name, df_ops, tot_lab_cost):
     pdf.cell(25, 7, 'Tarif (EUR)', 1, 0, 'R', True)
     pdf.cell(25, 7, 'Total (EUR)', 1, 1, 'R', True)
     
-    # Table Rows
     pdf.set_font('Helvetica', '', 9)
     for _, r in df_ops.iterrows():
         step_str = f"Step {r.get('Step', 1)}"
@@ -745,7 +737,7 @@ def create_finished_product_dialog():
         else:
             st.warning("Te rugăm să introduci Part Description!")
 
-# DIALOG MODAL POP-UP FOR PRODUCT RECIPES WITH PDF GENERATION & MARKUP
+# DIALOG MODAL POP-UP FOR PRODUCT RECIPES WITH PDF GENERATION & MARKUP & DEFENSIVE DB SCHEMA CHECK
 @st.dialog("➕ Edit Product BOM Recipe & Routing", width="large")
 def manage_product_bom_dialog(selected_prod_id=None):
     st.session_state["keep_bom_dialog_open"] = False
@@ -782,7 +774,14 @@ def manage_product_bom_dialog(selected_prod_id=None):
     curr_c_name = [k for k, v in cust_dict.items() if v == curr_c_id]
     sel_cust_name = st.selectbox("Assigned Customer *", c_keys, index=c_keys.index(curr_c_name[0]) if curr_c_name else 0)
 
-    cursor.execute("SELECT id, total_material_cost, total_labor_cost, total_production_cost, markup_percent FROM product_boms WHERE product_item_id = ?", (target_prod_id,))
+    # Defensive DB Check for markup_percent column
+    try:
+        cursor.execute("SELECT id, total_material_cost, total_labor_cost, total_production_cost, markup_percent FROM product_boms WHERE product_item_id = ?", (target_prod_id,))
+    except Exception:
+        cursor.execute("ALTER TABLE product_boms ADD COLUMN markup_percent REAL DEFAULT 0.0")
+        conn_dialog.commit()
+        cursor.execute("SELECT id, total_material_cost, total_labor_cost, total_production_cost, markup_percent FROM product_boms WHERE product_item_id = ?", (target_prod_id,))
+
     bom_row = cursor.fetchone()
     if not bom_row:
         cursor.execute("INSERT INTO product_boms (product_item_id, customer_id) VALUES (?, ?)", (target_prod_id, cust_dict.get(sel_cust_name)))
@@ -988,7 +987,6 @@ def manage_product_bom_dialog(selected_prod_id=None):
 
     st.markdown("##### 📊 BOM Summary & Automatic Price Calculations")
     
-    # Markup & Selling Price Controls
     m_col1, m_col2, m_col3, m_col4, m_col5 = st.columns(5)
     m_col1.metric("Material Cost", f"{tot_mat_cost:.2f} €")
     m_col2.metric("Operations Cost", f"{tot_lab_cost:.2f} €")
@@ -1001,10 +999,8 @@ def manage_product_bom_dialog(selected_prod_id=None):
 
     st.divider()
     
-    # PDF Exports & Save Bar
     p_col1, p_col2, p_col3 = st.columns([3, 3, 4])
     
-    # Generate PDFs
     pdf_bom_bytes = generate_bom_pdf(target_uniq_code, target_prod_name, sel_cust_name, calc_weight, df_bm, tot_mat_cost) if len(df_bm) > 0 else None
     pdf_rot_bytes = generate_routing_pdf(target_uniq_code, target_prod_name, sel_cust_name, df_bo, tot_lab_cost) if len(df_bo) > 0 else None
 
@@ -1100,7 +1096,7 @@ def edit_facility_dialog(fac_id):
             if c_del.form_submit_button("🗑️ Delete", use_container_width=True):
                 cursor.execute("DELETE FROM production_facilities WHERE id = ?", (fac_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
 
-# DIALOG MODALS FOR OPERATIONS (WITH MINUTES ADDED AS COST UNIT)
+# DIALOG MODALS FOR OPERATIONS
 @st.dialog("➕ Add Manufacturing Operation")
 def add_operation_dialog():
     conn_dialog = get_db()
