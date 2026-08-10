@@ -17,8 +17,6 @@ active_subtab = query_params.get("subtab", "Raw_Materials")
 render_top_header()
 render_nav_bar(active_page)
 
-conn = get_db()
-
 # Callback Functions for Filters
 def reset_raw_filters_callback():
     for k in ["f_raw_code", "f_raw_name", "f_raw_sub", "f_raw_supp", "f_raw_uom"]: st.session_state[k] = "All Sub-Groups" if "sub" in k else ("All Suppliers" if "supp" in k else ("All UoMs" if "uom" in k else ""))
@@ -29,23 +27,25 @@ def reset_buy_filters_callback():
 def reset_fg_filters_callback():
     for k in ["f_fg_code", "f_fg_name", "f_fg_cat"]: st.session_state[k] = "All Categories" if "cat" in k else ""
 
-# DIALOG MODAL POP-UP FOR ADDING
+# DIALOG MODAL POP-UP FOR ADDING (FIXED THREADING)
 @st.dialog("➕ Add New Item to Stock")
 def add_new_item_dialog():
+    conn_dialog = get_db() # <-- Conexiune locală izolată pentru a preveni eroarea SQLite Threading
+    
     st.subheader("Step 1: Select Item Type & Category")
     item_type = st.selectbox("Item Type *", ["Raw Material", "Buy Part", "Finished Good / Subassembly"])
     
     if item_type == "Raw Material":
         sub_group = st.selectbox("Main Sub-Group *", ["Tabla", "Teava", "Europrofile", "Raw Materials Diverse"])
-        auto_uniq = generate_unique_item_code(conn, "RAW MATERIAL", sub_group)
+        auto_uniq = generate_unique_item_code(conn_dialog, "RAW MATERIAL", sub_group)
         category = "RAW MATERIAL"
     elif item_type == "Buy Part":
         sub_group = "Buy Parts"
-        auto_uniq = generate_unique_item_code(conn, "BUY PART")
+        auto_uniq = generate_unique_item_code(conn_dialog, "BUY PART")
         category = "BUY PART"
     else:
         sub_group = "Finished Goods"
-        auto_uniq = generate_unique_item_code(conn, "FINISHED GOOD")
+        auto_uniq = generate_unique_item_code(conn_dialog, "FINISHED GOOD")
         category = st.selectbox("Category *", ["FINISHED GOOD", "SUBASSEMBLY"])
 
     with st.form("add_item_dynamic_form"):
@@ -55,11 +55,11 @@ def add_new_item_dialog():
             st.text_input("Uniq Code (Auto-Generated) *", value=auto_uniq, disabled=True)
             code = st.text_input("Part No. / Original Code *", value=auto_uniq)
             name = st.text_input("Part Description / Name *")
-            df_u_opts = pd.read_sql_query("SELECT id, code, name FROM units ORDER BY code", conn)
+            df_u_opts = pd.read_sql_query("SELECT id, code, name FROM units ORDER BY code", conn_dialog)
             u_dict = {f"{r['code']} ({r['name']})": r['id'] for _, r in df_u_opts.iterrows()}
             selected_u = st.selectbox("Unit of Measure (UoM) *", list(u_dict.keys()))
             if item_type != "Finished Good / Subassembly":
-                df_s_opts = pd.read_sql_query("SELECT id, name FROM suppliers ORDER BY name", conn)
+                df_s_opts = pd.read_sql_query("SELECT id, name FROM suppliers ORDER BY name", conn_dialog)
                 s_dict = {r['name']: r['id'] for _, r in df_s_opts.iterrows()}
                 selected_s = st.selectbox("Preferred Supplier", list(s_dict.keys()) if s_dict else ["No Supplier"])
             else:
@@ -72,7 +72,7 @@ def add_new_item_dialog():
             with col_w1: spec_weight = st.number_input("Specific Weight / Unit", min_value=0.0)
             with col_w2: w_unit = st.selectbox("Weight Unit", ["kg", "lbs", "g"])
             
-            df_w_opts = pd.read_sql_query("SELECT id, name FROM warehouses ORDER BY name", conn)
+            df_w_opts = pd.read_sql_query("SELECT id, name FROM warehouses ORDER BY name", conn_dialog)
             w_dict = {r['name']: r['id'] for _, r in df_w_opts.iterrows()}
             selected_w = st.selectbox("Storage Warehouse Location", list(w_dict.keys()))
             stock_qty = st.number_input("Initial Stock Quantity", min_value=0.0)
@@ -80,15 +80,16 @@ def add_new_item_dialog():
 
         if st.form_submit_button("💾 Save Item", type="primary", use_container_width=True):
             if auto_uniq and name:
-                conn.cursor().execute("""INSERT INTO stock_items (uniq_code, code, name, category, sub_group, supplier_id, unit_id, warehouse_id, purchase_price, selling_price, specific_weight, weight_unit, current_stock, min_stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", 
+                conn_dialog.cursor().execute("""INSERT INTO stock_items (uniq_code, code, name, category, sub_group, supplier_id, unit_id, warehouse_id, purchase_price, selling_price, specific_weight, weight_unit, current_stock, min_stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", 
                                       (auto_uniq, code, name, category, sub_group, s_dict.get(selected_s), u_dict.get(selected_u), w_dict.get(selected_w), price, selling_p, spec_weight, w_unit, stock_qty, min_stock_qty))
-                conn.commit()
+                conn_dialog.commit()
                 st.success("Item saved!"); st.rerun()
 
-# DIALOG MODAL POP-UP FOR EDITING
+# DIALOG MODAL POP-UP FOR EDITING (FIXED THREADING)
 @st.dialog("✏️ Edit Item Details")
 def edit_item_dialog(item_id):
-    cursor = conn.cursor()
+    conn_dialog = get_db() # <-- Conexiune locală izolată
+    cursor = conn_dialog.cursor()
     cursor.execute("SELECT uniq_code, code, name, category, sub_group, supplier_id, unit_id, warehouse_id, purchase_price, selling_price, specific_weight, weight_unit, current_stock, min_stock FROM stock_items WHERE id = ?", (item_id,))
     row = cursor.fetchone()
     
@@ -101,12 +102,12 @@ def edit_item_dialog(item_id):
                 e_name = st.text_input("Part Description / Name *", value=row[2])
                 e_sub = st.selectbox("Sub-Group *", ["Tabla", "Teava", "Europrofile", "Raw Materials Diverse"]) if row[3] == "RAW MATERIAL" else row[4]
                 
-                df_u_opts = pd.read_sql_query("SELECT id, code, name FROM units ORDER BY code", conn)
+                df_u_opts = pd.read_sql_query("SELECT id, code, name FROM units ORDER BY code", conn_dialog)
                 u_dict = {f"{r['code']} ({r['name']})": r['id'] for _, r in df_u_opts.iterrows()}; u_keys = list(u_dict.keys())
                 u_index = [idx for idx, k in enumerate(u_keys) if u_dict[k] == row[6]]
                 selected_u = st.selectbox("Unit of Measure (UoM)", u_keys, index=u_index[0] if u_index else 0)
 
-                df_s_opts = pd.read_sql_query("SELECT id, name FROM suppliers ORDER BY name", conn)
+                df_s_opts = pd.read_sql_query("SELECT id, name FROM suppliers ORDER BY name", conn_dialog)
                 s_dict = {r['name']: r['id'] for _, r in df_s_opts.iterrows()}; s_keys = ["No Supplier"] + list(s_dict.keys())
                 s_curr = [k for k, v in s_dict.items() if v == row[5]]
                 selected_s = st.selectbox("Supplier", s_keys, index=s_keys.index(s_curr[0]) if s_curr else 0)
@@ -119,7 +120,7 @@ def edit_item_dialog(item_id):
                 with c_w1: e_sweight = st.number_input("Spec Weight/Unit", value=safe_float(row[10]))
                 with c_w2: e_wunit = st.selectbox("Unit", ["kg", "lbs", "g"], index=["kg", "lbs", "g"].index(row[11] if row[11] else "kg"))
 
-                df_w_opts = pd.read_sql_query("SELECT id, name FROM warehouses ORDER BY name", conn)
+                df_w_opts = pd.read_sql_query("SELECT id, name FROM warehouses ORDER BY name", conn_dialog)
                 w_dict = {r['name']: r['id'] for _, r in df_w_opts.iterrows()}; w_keys = list(w_dict.keys())
                 w_curr = [k for k, v in w_dict.items() if v == row[7]]
                 selected_w = st.selectbox("Warehouse", w_keys, index=w_keys.index(w_curr[0]) if w_curr else 0)
@@ -131,13 +132,15 @@ def edit_item_dialog(item_id):
             if c_save.form_submit_button("💾 Save Changes", type="primary", use_container_width=True):
                 cursor.execute("""UPDATE stock_items SET code=?, name=?, sub_group=?, supplier_id=?, unit_id=?, warehouse_id=?, purchase_price=?, selling_price=?, specific_weight=?, weight_unit=?, current_stock=?, min_stock=? WHERE id=?""", 
                                (e_code, e_name, e_sub, s_dict.get(selected_s), u_dict.get(selected_u), w_dict.get(selected_w), e_pprice, e_sprice, e_sweight, e_wunit, e_stock, e_minstock, item_id))
-                conn.commit(); st.success("Updated!"); st.rerun()
+                conn_dialog.commit(); st.success("Updated!"); st.rerun()
             if c_del.form_submit_button("🗑️ Delete", use_container_width=True):
-                cursor.execute("DELETE FROM stock_items WHERE id = ?", (item_id,)); conn.commit(); st.success("Deleted!"); st.rerun()
+                cursor.execute("DELETE FROM stock_items WHERE id = ?", (item_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
 
 # ==========================================
 # PAGE ROUTING
 # ==========================================
+conn = get_db() # Conexiune principală pentru restul paginii
+
 if active_page == "Home":
     st.markdown("""
     <div class="launchpad-grid">
