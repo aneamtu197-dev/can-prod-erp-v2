@@ -148,6 +148,314 @@ def get_selected_ids(df, selected_rows):
                 valid_ids.append(int(df.iloc[idx]['ID']))
     return valid_ids
 
+# DIALOG MODAL POP-UP FOR ADDING STOCK ITEMS
+@st.dialog("➕ Add New Item to Stock")
+def add_new_item_dialog(default_type="Raw Material"):
+    conn_dialog = get_db()
+    st.subheader("Step 1: Select Item Type & Category")
+    types = ["Raw Material", "Buy Part", "Finished Good / Subassembly"]
+    item_type = st.selectbox("Item Type *", types, index=types.index(default_type) if default_type in types else 0)
+    
+    if item_type == "Raw Material":
+        sub_group = st.selectbox("Main Sub-Group *", ["Tabla", "Teava", "Europrofile", "Raw Materials Diverse"])
+        auto_uniq = generate_unique_item_code(conn_dialog, "RAW MATERIAL", sub_group)
+        category = "RAW MATERIAL"
+    elif item_type == "Buy Part":
+        sub_group = "Buy Parts"
+        auto_uniq = generate_unique_item_code(conn_dialog, "BUY PART")
+        category = "BUY PART"
+    else:
+        sub_group = "Finished Goods"
+        auto_uniq = generate_unique_item_code(conn_dialog, "FINISHED GOOD")
+        category = st.selectbox("Category *", ["FINISHED GOOD", "SUBASSEMBLY"])
+
+    with st.form("add_item_dynamic_form"):
+        st.subheader("Step 2: Item Characteristics")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.text_input("Uniq Code (Auto-Generated) *", value=auto_uniq, disabled=True)
+            code = st.text_input("Part No. / Original Code *", value=auto_uniq)
+            name = st.text_input("Part Description / Name *")
+            df_u_opts = pd.read_sql_query("SELECT id, code, name FROM units ORDER BY code", conn_dialog)
+            u_dict = {f"{r['code']} ({r['name']})": r['id'] for _, r in df_u_opts.iterrows()}
+            selected_u = st.selectbox("Unit of Measure (UoM) *", list(u_dict.keys()))
+            
+            df_s_opts = pd.read_sql_query("SELECT id, name FROM suppliers ORDER BY name", conn_dialog)
+            s_dict = {r['name']: r['id'] for _, r in df_s_opts.iterrows()}
+            selected_s = st.selectbox("Preferred Supplier", ["No Supplier"] + list(s_dict.keys())) if item_type != "Finished Good / Subassembly" else "No Supplier"
+
+            df_c_opts = pd.read_sql_query("SELECT id, name FROM customers ORDER BY name", conn_dialog)
+            c_dict = {r['name']: r['id'] for _, r in df_c_opts.iterrows()}
+            selected_c = st.selectbox("Assigned Customer", ["General / Stock Product"] + list(c_dict.keys())) if item_type == "Finished Good / Subassembly" else "General / Stock Product"
+
+        with col2:
+            price = st.number_input("Purchase Price (€)", min_value=0.0) if item_type != "Finished Good / Subassembly" else 0.0
+            selling_p = st.number_input("Selling Price (€)", min_value=0.0)
+            c_w1, c_w2 = st.columns([2, 1])
+            with c_w1: spec_weight = st.number_input("Specific Weight / Unit", min_value=0.0)
+            with c_w2: w_unit = st.selectbox("Weight Unit", ["kg", "lbs", "g"])
+            
+            df_w_opts = pd.read_sql_query("SELECT id, name FROM warehouses ORDER BY name", conn_dialog)
+            w_dict = {r['name']: r['id'] for _, r in df_w_opts.iterrows()}
+            selected_w = st.selectbox("Storage Warehouse Location", list(w_dict.keys()))
+            stock_qty = st.number_input("Initial Stock Quantity", min_value=0.0)
+            min_stock_qty = st.number_input("Reorder Point / Min Stock", min_value=0.0)
+
+        if st.form_submit_button("💾 Save Item", type="primary", use_container_width=True):
+            if auto_uniq and name:
+                cursor = conn_dialog.cursor()
+                cursor.execute("SELECT id FROM stock_items WHERE code = ? OR name = ?", (code.strip(), name.strip()))
+                if cursor.fetchone():
+                    st.warning(f"⚠️ An item with code '{code.strip()}' or name '{name.strip()}' already exists!")
+                else:
+                    supp_id_val = s_dict.get(selected_s) if selected_s != "No Supplier" else None
+                    cust_id_val = c_dict.get(selected_c) if selected_c != "General / Stock Product" else None
+                    cursor.execute("""INSERT INTO stock_items (uniq_code, code, name, category, sub_group, supplier_id, customer_id, unit_id, warehouse_id, purchase_price, selling_price, specific_weight, weight_unit, current_stock, min_stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", 
+                                          (auto_uniq, code.strip(), name.strip(), category, sub_group, supp_id_val, cust_id_val, u_dict.get(selected_u), w_dict.get(selected_w), price, selling_p, spec_weight, w_unit, stock_qty, min_stock_qty))
+                    conn_dialog.commit(); st.success("Item saved!"); st.rerun()
+            else:
+                st.warning("Please fill in Part Description / Name!")
+
+@st.dialog("✏️ Edit Item Details")
+def edit_item_dialog(item_id):
+    conn_dialog = get_db()
+    cursor = conn_dialog.cursor()
+    cursor.execute("SELECT uniq_code, code, name, category, sub_group, supplier_id, unit_id, warehouse_id, purchase_price, selling_price, specific_weight, weight_unit, current_stock, min_stock, customer_id FROM stock_items WHERE id = ?", (item_id,))
+    row = cursor.fetchone()
+    
+    if row:
+        with st.form("edit_item_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.text_input("Uniq Code (Read-Only) *", value=row[0], disabled=True)
+                e_code = st.text_input("Part No. / Original Code *", value=row[1])
+                e_name = st.text_input("Part Description / Name *", value=row[2])
+                e_sub = st.selectbox("Sub-Group *", ["Tabla", "Teava", "Europrofile", "Raw Materials Diverse"]) if row[3] == "RAW MATERIAL" else row[4]
+                
+                df_u_opts = pd.read_sql_query("SELECT id, code, name FROM units ORDER BY code", conn_dialog)
+                u_dict = {f"{r['code']} ({r['name']})": r['id'] for _, r in df_u_opts.iterrows()}; u_keys = list(u_dict.keys())
+                u_index = [idx for idx, k in enumerate(u_keys) if u_dict[k] == row[6]]
+                selected_u = st.selectbox("Unit of Measure (UoM)", u_keys, index=u_index[0] if u_index else 0)
+
+                df_s_opts = pd.read_sql_query("SELECT id, name FROM suppliers ORDER BY name", conn_dialog)
+                s_dict = {r['name']: r['id'] for _, r in df_s_opts.iterrows()}; s_keys = ["No Supplier"] + list(s_dict.keys())
+                s_curr = [k for k, v in s_dict.items() if v == row[5]]
+                selected_s = st.selectbox("Supplier", s_keys, index=s_keys.index(s_curr[0]) if s_curr else 0)
+
+                df_c_opts = pd.read_sql_query("SELECT id, name FROM customers ORDER BY name", conn_dialog)
+                c_dict = {r['name']: r['id'] for _, r in df_c_opts.iterrows()}; c_keys = ["General / Stock Product"] + list(c_dict.keys())
+                c_curr = [k for k, v in c_dict.items() if v == row[14]]
+                selected_c = st.selectbox("Assigned Customer", c_keys, index=c_keys.index(c_curr[0]) if c_curr else 0) if row[3] in ["FINISHED GOOD", "SUBASSEMBLY"] else "General / Stock Product"
+
+            with col2:
+                e_pprice = st.number_input("Purchase Price (€)", value=safe_float(row[8]))
+                e_sprice = st.number_input("Selling Price (€)", value=safe_float(row[9]))
+                
+                c_w1, c_w2 = st.columns([2, 1])
+                with c_w1: e_sweight = st.number_input("Spec Weight/Unit", value=safe_float(row[10]))
+                with c_w2: e_wunit = st.selectbox("Unit", ["kg", "lbs", "g"], index=["kg", "lbs", "g"].index(row[11] if row[11] else "kg"))
+
+                df_w_opts = pd.read_sql_query("SELECT id, name FROM warehouses ORDER BY name", conn_dialog)
+                w_dict = {r['name']: r['id'] for _, r in df_w_opts.iterrows()}; w_keys = list(w_dict.keys())
+                w_curr = [k for k, v in w_dict.items() if v == row[7]]
+                selected_w = st.selectbox("Warehouse", w_keys, index=w_keys.index(w_curr[0]) if w_curr else 0)
+
+                e_stock = st.number_input("Current Stock", value=safe_float(row[12]))
+                e_minstock = st.number_input("Reorder Point", value=safe_float(row[13]))
+
+            c_save, c_del = st.columns([8, 2])
+            if c_save.form_submit_button("💾 Save Changes", type="primary", use_container_width=True):
+                supp_id_val = s_dict.get(selected_s) if selected_s != "No Supplier" else None
+                cust_id_val = c_dict.get(selected_c) if selected_c != "General / Stock Product" else None
+                cursor.execute("""UPDATE stock_items SET code=?, name=?, sub_group=?, supplier_id=?, customer_id=?, unit_id=?, warehouse_id=?, purchase_price=?, selling_price=?, specific_weight=?, weight_unit=?, current_stock=?, min_stock=? WHERE id=?""", 
+                               (e_code, e_name, e_sub, supp_id_val, cust_id_val, u_dict.get(selected_u), w_dict.get(selected_w), e_pprice, e_sprice, e_sweight, e_wunit, e_stock, e_minstock, item_id))
+                conn_dialog.commit(); st.success("Updated!"); st.rerun()
+            if c_del.form_submit_button("🗑️ Delete", use_container_width=True):
+                cursor.execute("DELETE FROM stock_items WHERE id = ?", (item_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
+
+# DIALOG MODAL POP-UP FOR SUPPLIERS
+@st.dialog("➕ Add New Supplier")
+def add_supplier_dialog():
+    conn_dialog = get_db()
+    st.subheader("🔍 Auto-Complete via ANAF API")
+    col_anaf1, col_anaf2 = st.columns([3, 1])
+    with col_anaf1: search_cui = st.text_input("CUI (RO...)", key="s_cui_input")
+    with col_anaf2:
+        st.write(""); st.write("")
+        if st.button("Search ANAF", use_container_width=True):
+            if search_cui:
+                with st.spinner('Se caută...'):
+                    data, err = fetch_anaf_data(search_cui)
+                if data:
+                    st.session_state['s_anaf_name'] = data['name']; st.session_state['s_anaf_address'] = data['address']
+                    st.session_state['s_anaf_reg'] = data['reg_com']; st.session_state['s_anaf_cui'] = search_cui
+                    st.success("Date descărcate!")
+                else: st.error(err)
+    st.divider()
+    with st.form("add_supplier_form"):
+        st.subheader("Supplier Details")
+        col1, col2 = st.columns(2)
+        with col1:
+            s_code = st.text_input("Supplier Internal Code *", placeholder="e.g. SUP003")
+            s_cui = st.text_input("CUI / Tax ID *", value=st.session_state.get('s_anaf_cui', ''))
+            s_name = st.text_input("Supplier Name *", value=st.session_state.get('s_anaf_name', ''))
+            s_reg = st.text_input("Reg. Com. (J.../...)", value=st.session_state.get('s_anaf_reg', ''))
+            s_type = st.selectbox("Type of Supplier *", ["Raw Material Supplier", "Buy Parts Supplier", "General / Both"])
+            s_address = st.text_area("Address", value=st.session_state.get('s_anaf_address', ''), height=105)
+        with col2:
+            s_contact = st.text_input("Contact Person")
+            s_phone = st.text_input("Phone Number")
+            s_email = st.text_input("E-mail Address")
+            s_lt = st.number_input("Lead Time (Days)", min_value=0, value=3)
+            st.markdown("##### Banking Details")
+            s_iban = st.text_input("IBAN")
+            s_bank = st.text_input("Bank Name")
+
+        if st.form_submit_button("💾 Save Supplier", type="primary", use_container_width=True):
+            if s_code and s_name:
+                cursor = conn_dialog.cursor()
+                cursor.execute("SELECT id FROM suppliers WHERE code = ? OR name = ?", (s_code.strip(), s_name.strip()))
+                if cursor.fetchone():
+                    st.warning(f"⚠️ A supplier with code '{s_code.strip()}' or name '{s_name.strip()}' already exists!")
+                else:
+                    cursor.execute("INSERT INTO suppliers (code, name, supplier_type, contact_person, phone, email, lead_time_days, cui, reg_com, address, iban, bank_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", 
+                                                (s_code.strip(), s_name.strip(), s_type, s_contact.strip(), s_phone.strip(), s_email.strip(), s_lt, s_cui.strip(), s_reg.strip(), s_address.strip(), s_iban.strip(), s_bank.strip()))
+                    conn_dialog.commit()
+                    for k in ['s_anaf_cui', 's_anaf_name', 's_anaf_address', 's_anaf_reg']:
+                        if k in st.session_state: del st.session_state[k]
+                    st.success("Supplier saved!"); st.rerun()
+
+@st.dialog("✏️ Edit Supplier Details")
+def edit_supplier_dialog(supp_id):
+    conn_dialog = get_db()
+    cursor = conn_dialog.cursor()
+    cursor.execute("SELECT code, name, supplier_type, contact_person, phone, email, lead_time_days, cui, reg_com, address, iban, bank_name FROM suppliers WHERE id = ?", (supp_id,))
+    row = cursor.fetchone()
+    if row:
+        with st.form("edit_supplier_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                e_code = st.text_input("Supplier Internal Code *", value=row[0])
+                e_cui = st.text_input("CUI / Tax ID", value=row[7] if row[7] else "")
+                e_name = st.text_input("Supplier Name *", value=row[1])
+                e_reg = st.text_input("Reg. Com.", value=row[8] if row[8] else "")
+                e_type = st.selectbox("Type of Supplier *", ["Raw Material Supplier", "Buy Parts Supplier", "General / Both"], index=["Raw Material Supplier", "Buy Parts Supplier", "General / Both"].index(row[2]) if row[2] in ["Raw Material Supplier", "Buy Parts Supplier", "General / Both"] else 0)
+                e_address = st.text_area("Address", value=row[9] if row[9] else "", height=105)
+            with col2:
+                e_contact = st.text_input("Contact Person", value=row[3] if row[3] else "")
+                e_phone = st.text_input("Phone Number", value=row[4] if row[4] else "")
+                e_email = st.text_input("E-mail Address", value=row[5] if row[5] else "")
+                e_lt = st.number_input("Lead Time (Days)", min_value=0, value=int(row[6]))
+                st.markdown("##### Banking Details")
+                e_iban = st.text_input("IBAN", value=row[10] if row[10] else "")
+                e_bank = st.text_input("Bank Name", value=row[11] if row[11] else "")
+
+            c_save, c_del = st.columns([8, 2])
+            if c_save.form_submit_button("💾 Save Changes", type="primary", use_container_width=True):
+                cursor.execute("UPDATE suppliers SET code=?, name=?, supplier_type=?, contact_person=?, phone=?, email=?, lead_time_days=?, cui=?, reg_com=?, address=?, iban=?, bank_name=? WHERE id=?", 
+                               (e_code, e_name, e_type, e_contact, e_phone, e_email, e_lt, e_cui, e_reg, e_address, e_iban, e_bank, supp_id))
+                conn_dialog.commit(); st.success("Updated!"); st.rerun()
+            if c_del.form_submit_button("🗑️ Delete", use_container_width=True):
+                cursor.execute("DELETE FROM suppliers WHERE id = ?", (supp_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
+
+# DIALOG MODAL POP-UP FOR CUSTOMERS
+@st.dialog("➕ Add New Customer")
+def add_customer_dialog():
+    conn_dialog = get_db()
+    auto_cust_code = generate_unique_customer_code(conn_dialog)
+    
+    st.subheader("🔍 Auto-Complete via ANAF API")
+    col_anaf1, col_anaf2 = st.columns([3, 1])
+    with col_anaf1: search_cui = st.text_input("CUI (RO...)", key="c_cui_input")
+    with col_anaf2:
+        st.write(""); st.write("")
+        if st.button("Search ANAF", key="btn_c_anaf", use_container_width=True):
+            if search_cui:
+                with st.spinner('Se caută...'):
+                    data, err = fetch_anaf_data(search_cui)
+                if data:
+                    st.session_state['c_anaf_name'] = data['name']; st.session_state['c_anaf_address'] = data['address']
+                    st.session_state['c_anaf_reg'] = data['reg_com']; st.session_state['c_anaf_cui'] = search_cui
+                    st.success("Date descărcate!")
+                else: st.error(err)
+    st.divider()
+    with st.form("add_customer_form"):
+        st.subheader("Customer Details")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.text_input("Customer Code (Auto-Generated) *", value=auto_cust_code, disabled=True)
+            c_cui = st.text_input("CUI / Tax ID", value=st.session_state.get('c_anaf_cui', ''))
+            c_name = st.text_input("Customer Name *", value=st.session_state.get('c_anaf_name', ''))
+            c_reg = st.text_input("Reg. Com. (J.../...)", value=st.session_state.get('c_anaf_reg', ''))
+            c_address = st.text_area("Address", value=st.session_state.get('c_anaf_address', ''), height=105)
+        with col2:
+            c_contact = st.text_input("Contact Person")
+            c_phone = st.text_input("Phone Number")
+            c_email = st.text_input("E-mail Address")
+            st.markdown("##### Banking Details")
+            c_iban = st.text_input("IBAN")
+            c_bank = st.text_input("Bank Name")
+
+        if st.form_submit_button("💾 Save Customer", type="primary", use_container_width=True):
+            if c_name.strip():
+                cursor = conn_dialog.cursor()
+                query_check = "SELECT id FROM customers WHERE name = ?"
+                params_check = [c_name.strip()]
+                if c_cui.strip():
+                    query_check += " OR (cui != '' AND cui = ?)"
+                    params_check.append(c_cui.strip())
+                cursor.execute(query_check, params_check)
+                if cursor.fetchone():
+                    st.warning(f"⚠️ A customer with the name '{c_name.strip()}' or CUI '{c_cui.strip()}' already exists!")
+                else:
+                    cursor.execute("INSERT INTO customers (code, name, cui, reg_com, address, iban, bank_name, contact_person, phone, email) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", 
+                                                (auto_cust_code, c_name.strip(), c_cui.strip(), c_reg.strip(), c_address.strip(), c_iban.strip(), c_bank.strip(), c_contact.strip(), c_phone.strip(), c_email.strip()))
+                    conn_dialog.commit()
+                    
+                    # Create Virtual WH using Exact Name
+                    wh_code = f"WH-CUST-{cursor.lastrowid:03d}"
+                    wh_name = c_name.strip()
+                    cursor.execute("INSERT INTO warehouses (code, name, location_type, customer_id) VALUES (?, ?, 'Customer Virtual Storage', ?)", (wh_code, wh_name, cursor.lastrowid))
+                    conn_dialog.commit()
+
+                    for k in ['c_anaf_cui', 'c_anaf_name', 'c_anaf_address', 'c_anaf_reg']:
+                        if k in st.session_state: del st.session_state[k]
+                    st.success("Customer saved!"); st.rerun()
+            else:
+                st.warning("Please fill in Customer Name!")
+
+@st.dialog("✏️ Edit Customer Details")
+def edit_customer_dialog(cust_id):
+    conn_dialog = get_db()
+    cursor = conn_dialog.cursor()
+    cursor.execute("SELECT code, name, cui, reg_com, address, iban, bank_name, contact_person, phone, email FROM customers WHERE id = ?", (cust_id,))
+    row = cursor.fetchone()
+    if row:
+        with st.form("edit_customer_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.text_input("Customer Code (Read-Only) *", value=row[0], disabled=True)
+                e_cui = st.text_input("CUI / Tax ID", value=row[2] if row[2] else "")
+                e_name = st.text_input("Customer Name *", value=row[1])
+                e_reg = st.text_input("Reg. Com.", value=row[3] if row[3] else "")
+                e_address = st.text_area("Address", value=row[4] if row[4] else "", height=105)
+            with col2:
+                e_contact = st.text_input("Contact Person", value=row[7] if row[7] else "")
+                e_phone = st.text_input("Phone Number", value=row[8] if row[8] else "")
+                e_email = st.text_input("E-mail Address", value=row[9] if row[9] else "")
+                st.markdown("##### Banking Details")
+                e_iban = st.text_input("IBAN", value=row[5] if row[5] else "")
+                e_bank = st.text_input("Bank Name", value=row[6] if row[6] else "")
+
+            c_save, c_del = st.columns([8, 2])
+            if c_save.form_submit_button("💾 Save Changes", type="primary", use_container_width=True):
+                cursor.execute("UPDATE customers SET name=?, cui=?, reg_com=?, address=?, iban=?, bank_name=?, contact_person=?, phone=?, email=? WHERE id=?", 
+                               (e_name.strip(), e_cui.strip(), e_reg.strip(), e_address.strip(), e_iban.strip(), e_bank.strip(), e_contact.strip(), e_phone.strip(), e_email.strip(), cust_id))
+                cursor.execute("UPDATE warehouses SET name=? WHERE customer_id=?", (e_name.strip(), cust_id))
+                conn_dialog.commit(); st.success("Updated!"); st.rerun()
+            if c_del.form_submit_button("🗑️ Delete", use_container_width=True):
+                cursor.execute("DELETE FROM customers WHERE id = ?", (cust_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
+
 # ADVANCED PRODUCT ITEM CREATION DIALOG (MRPEASY MATCHING INTERFACE)
 @st.dialog("➕ Create New Finished Product", width="large")
 def create_finished_product_dialog():
@@ -183,7 +491,7 @@ def create_finished_product_dialog():
 
     with col2:
         df_wh = pd.read_sql_query("SELECT id, name, location_type FROM warehouses ORDER BY name", conn_dialog)
-        wh_dict = {f"{r['name']} [{r['location_type']}]": r['id'] for _, r in df_wh.iterrows()}
+        wh_dict = {f"{r['name']}": r['id'] for _, r in df_wh.iterrows()}
         sel_wh = st.selectbox("Default Storage Location (Customer Warehouse) *", list(wh_dict.keys()))
         
         df_cust = pd.read_sql_query("SELECT id, name FROM customers ORDER BY name", conn_dialog)
@@ -221,7 +529,6 @@ def create_finished_product_dialog():
             
     if st.button("💾 Save Item & Build Recipe", type="primary", use_container_width=True):
         if part_desc.strip():
-            # Anti duplicate check
             cursor.execute("SELECT id FROM stock_items WHERE name = ?", (part_desc.strip(),))
             if cursor.fetchone():
                 st.warning(f"⚠️ Un produs cu denumirea '{part_desc.strip()}' există deja!")
@@ -242,19 +549,16 @@ def create_finished_product_dialog():
                 if selected_copy != "None (Start from Scratch)":
                     src_bom_id = copy_dict[selected_copy]
                     
-                    # Copy materials
                     cursor.execute("SELECT material_item_id, quantity_required, unit_cost, total_cost FROM bom_materials WHERE bom_id = ?", (src_bom_id,))
                     for m_item, qty, u_c, t_c in cursor.fetchall():
                         cursor.execute("INSERT INTO bom_materials (bom_id, material_item_id, quantity_required, unit_cost, total_cost) VALUES (?, ?, ?, ?, ?)",
                                        (new_bom_id, m_item, qty, u_c, t_c))
                                        
-                    # Copy operations
                     cursor.execute("SELECT operation_id, step_number, duration_hours, rate_applied, total_cost FROM bom_operations WHERE bom_id = ?", (src_bom_id,))
                     for op_id, step_n, dur, r_app, t_c in cursor.fetchall():
                         cursor.execute("INSERT INTO bom_operations (bom_id, operation_id, step_number, duration_hours, rate_applied, total_cost) VALUES (?, ?, ?, ?, ?, ?)",
                                        (new_bom_id, op_id, step_n, dur, r_app, t_c))
                                        
-                    # Update totals
                     cursor.execute("SELECT SUM(total_cost) FROM bom_materials WHERE bom_id = ?", (new_bom_id,))
                     tot_m = cursor.fetchone()[0] or 0.0
                     cursor.execute("SELECT SUM(total_cost) FROM bom_operations WHERE bom_id = ?", (new_bom_id,))
@@ -275,7 +579,6 @@ def manage_product_bom_dialog(selected_prod_id=None):
     conn_dialog = get_db()
     cursor = conn_dialog.cursor()
     
-    # Load Finished Goods
     df_prods = pd.read_sql_query("SELECT id, uniq_code, code, name, customer_id FROM stock_items WHERE category IN ('FINISHED GOOD', 'SUBASSEMBLY') ORDER BY name", conn_dialog)
     if len(df_prods) == 0:
         st.warning("Please add Finished Goods in Stock before creating BOM Recipes!")
@@ -291,7 +594,6 @@ def manage_product_bom_dialog(selected_prod_id=None):
     sel_prod_key = st.selectbox("Select Product (Finished Good) *", list(prod_dict.keys()), index=idx_prod)
     target_prod_id = prod_dict[sel_prod_key]
 
-    # Load Customer
     df_cust = pd.read_sql_query("SELECT id, name FROM customers ORDER BY name", conn_dialog)
     cust_dict = {r['name']: r['id'] for _, r in df_cust.iterrows()}
     
@@ -302,7 +604,6 @@ def manage_product_bom_dialog(selected_prod_id=None):
     curr_c_name = [k for k, v in cust_dict.items() if v == curr_c_id]
     sel_cust_name = st.selectbox("Assigned Customer *", c_keys, index=c_keys.index(curr_c_name[0]) if curr_c_name else 0)
 
-    # Fetch or Create BOM Master Record
     cursor.execute("SELECT id, total_material_cost, total_labor_cost, total_production_cost FROM product_boms WHERE product_item_id = ?", (target_prod_id,))
     bom_row = cursor.fetchone()
     if not bom_row:
@@ -314,7 +615,6 @@ def manage_product_bom_dialog(selected_prod_id=None):
 
     st.divider()
     
-    # TABULAR BUILDER: MATERIALS & OPERATIONS
     t_mat, t_ops = st.tabs(["📦 Material Consumption (BOM)", "⚙️ Labor Operations (Routing)"])
     
     with t_mat:
@@ -336,7 +636,6 @@ def manage_product_bom_dialog(selected_prod_id=None):
                                (bom_id, m_id, add_mat_qty, price, tot_c))
                 conn_dialog.commit(); st.rerun()
 
-        # Display Added Materials
         q_bm = """
             SELECT bm.id as ID, si.uniq_code as 'Code', si.name as 'Material Name', bm.quantity_required as 'Qty', u.code as 'UoM', bm.unit_cost as 'Price (€)', bm.total_cost as 'Total Cost (€)', si.specific_weight as 'Spec Weight'
             FROM bom_materials bm
@@ -396,7 +695,6 @@ def manage_product_bom_dialog(selected_prod_id=None):
     
     tot_prod_cost = tot_mat_cost + tot_lab_cost
 
-    # Weight Calculation Check
     calc_weight = 0.0
     missing_weights = []
     cursor.execute("SELECT si.name, bm.quantity_required, si.specific_weight FROM bom_materials bm JOIN stock_items si ON bm.material_item_id = si.id WHERE bm.bom_id = ?", (bom_id,))
@@ -408,7 +706,7 @@ def manage_product_bom_dialog(selected_prod_id=None):
 
     st.divider()
     if missing_weights:
-        st.warning(f"⚠️ Atenție: Componentele următoare NU au greutatea notată în stoc: **{', '.join(missing_weights)}**. Vă rugăm să le actualizați greutatea specfică în modulul Stock!")
+        st.warning(f"⚠️ Atenție: Componentele următoare NU au greutatea notată în stoc: **{', '.join(missing_weights)}**. Vă rugăm să le actualizați greutatea specifică în modulul Stock!")
 
     st.markdown("##### 📊 BOM Summary & Automatic Calculations")
     sc1, sc2, sc3, sc4 = st.columns(4)
@@ -824,7 +1122,7 @@ elif active_page == "Stock":
 
     elif active_subtab == "Warehouses":
         st.markdown("##### Warehouses & Customer Virtual Storage")
-        df_w = pd.read_sql_query("SELECT w.id as ID, w.code as Code, w.name as 'Warehouse Name', w.location_type as Type, COALESCE(c.name, 'Internal') as 'Owner Customer' FROM warehouses w LEFT JOIN customers c ON w.customer_id = c.id", conn)
+        df_w = pd.read_sql_query("SELECT w.id as ID, w.name as 'Warehouse Name', w.location_type as Type, COALESCE(c.name, 'Internal') as 'Owner Customer' FROM warehouses w LEFT JOIN customers c ON w.customer_id = c.id", conn)
         st.dataframe(df_w, use_container_width=True, hide_index=True)
         
     elif active_subtab == "Units":
@@ -859,7 +1157,7 @@ elif active_page == "BOM":
                 si.uniq_code as 'Product Code',
                 si.name as 'Product Name',
                 COALESCE(c.name, 'General / Stock Product') as 'Customer',
-                b.calculated_weight as 'Weight (kg)',
+                COALESCE(b.calculated_weight, 0.0) as 'Weight (kg)',
                 b.total_material_cost as 'Material Cost (€)',
                 b.total_labor_cost as 'Operations Cost (€)',
                 b.total_production_cost as 'Total BOM Cost (€)'
