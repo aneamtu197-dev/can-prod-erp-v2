@@ -64,6 +64,7 @@ def init_custom_db():
         cost_unit VARCHAR(20) DEFAULT 'Hour',
         rate_per_unit REAL DEFAULT 0.0,
         productivity_level REAL DEFAULT 1.0,
+        hours_per_operator REAL DEFAULT 8.0,
         max_hours_day REAL DEFAULT 8.0,
         max_hours_week REAL DEFAULT 40.0,
         max_hours_month REAL DEFAULT 160.0,
@@ -112,6 +113,12 @@ def init_custom_db():
         FOREIGN KEY (warehouse_id) REFERENCES warehouses(id)
     );
     """)
+
+    # AUTO-REPAIR SCHEMA FOR OPERATIONS
+    cursor.execute("PRAGMA table_info(operations)")
+    existing_op_cols = [col[1] for col in cursor.fetchall()]
+    if 'hours_per_operator' not in existing_op_cols:
+        cursor.execute("ALTER TABLE operations ADD COLUMN hours_per_operator REAL DEFAULT 8.0")
 
     # DEFAULT UNITS
     cursor.execute("SELECT COUNT(*) FROM units")
