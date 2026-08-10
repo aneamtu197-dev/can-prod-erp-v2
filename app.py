@@ -46,6 +46,30 @@ conn = get_db()
 if "bom_select_version" not in st.session_state:
     st.session_state["bom_select_version"] = 0
 
+# --- HELPER TO GET OR CREATE SINGLE UNIQUE BOM ID ---
+def get_or_create_product_bom(conn_dialog, target_prod_id, cust_id=None):
+    cursor = conn_dialog.cursor()
+    cursor.execute("SELECT id FROM product_boms WHERE product_item_id = ? ORDER BY id ASC", (target_prod_id,))
+    rows = cursor.fetchall()
+    
+    if not rows:
+        cursor.execute("INSERT INTO product_boms (product_item_id, customer_id) VALUES (?, ?)", (target_prod_id, cust_id))
+        conn_dialog.commit()
+        return cursor.lastrowid
+    
+    main_bom_id = rows[0][0]
+    
+    # If duplicates existed, merge orphan materials and operations to main_bom_id
+    if len(rows) > 1:
+        other_ids = [r[0] for r in rows[1:]]
+        placeholders = ",".join(["?"] * len(other_ids))
+        cursor.execute(f"UPDATE bom_materials SET bom_id = ? WHERE bom_id IN ({placeholders})", [main_bom_id] + other_ids)
+        cursor.execute(f"UPDATE bom_operations SET bom_id = ? WHERE bom_id IN ({placeholders})", [main_bom_id] + other_ids)
+        cursor.execute(f"DELETE FROM product_boms WHERE id IN ({placeholders})", other_ids)
+        conn_dialog.commit()
+        
+    return main_bom_id
+
 # --- PDF GENERATION FUNCTIONS ---
 class PDF(FPDF):
     def header(self):
@@ -704,9 +728,7 @@ def create_finished_product_dialog():
                 """, (auto_part_no, auto_part_no, part_desc.strip(), prod_group, "Finished Goods", cust_id_val, u_dict[sel_uom], wh_dict[sel_wh_cur], selling_p, calc_weight, auto_barcode))
                 
                 new_prod_id = cursor.lastrowid
-                
-                cursor.execute("INSERT INTO product_boms (product_item_id, customer_id, calculated_weight) VALUES (?, ?, ?)", (new_prod_id, cust_id_val, calc_weight))
-                new_bom_id = cursor.lastrowid
+                new_bom_id = get_or_create_product_bom(conn_dialog, new_prod_id, cust_id_val)
                 
                 if selected_copy != "None (Start from Scratch)":
                     src_bom_id = copy_dict[selected_copy]
@@ -737,7 +759,7 @@ def create_finished_product_dialog():
         else:
             st.warning("Te rugăm să introduci Part Description!")
 
-# DIALOG MODAL POP-UP FOR PRODUCT RECIPES WITH PDF GENERATION & MARKUP & DEFENSIVE DB SCHEMA CHECK
+# DIALOG MODAL POP-UP FOR PRODUCT RECIPES WITH PDF GENERATION & GUARANTEED BOM PERSISTENCE
 @st.dialog("➕ Edit Product BOM Recipe & Routing", width="large")
 def manage_product_bom_dialog(selected_prod_id=None):
     st.session_state["keep_bom_dialog_open"] = False
@@ -774,33 +796,12 @@ def manage_product_bom_dialog(selected_prod_id=None):
     curr_c_name = [k for k, v in cust_dict.items() if v == curr_c_id]
     sel_cust_name = st.selectbox("Assigned Customer *", c_keys, index=c_keys.index(curr_c_name[0]) if curr_c_name else 0)
 
-    # Clean duplicates in product_boms to avoid OperationalError / multiple rows
-    cursor.execute("SELECT id FROM product_boms WHERE product_item_id = ? ORDER BY id ASC", (target_prod_id,))
-    bom_rows_all = cursor.fetchall()
-    if len(bom_rows_all) > 1:
-        keep_id = bom_rows_all[-1][0] # Keep latest
-        dup_ids = [r[0] for r in bom_rows_all[:-1]]
-        placeholders_d = ",".join(["?"] * len(dup_ids))
-        cursor.execute(f"DELETE FROM product_boms WHERE id IN ({placeholders_d})", dup_ids)
-        conn_dialog.commit()
-
-    # Defensive DB Check for markup_percent column
-    try:
-        cursor.execute("SELECT id, total_material_cost, total_labor_cost, total_production_cost, markup_percent FROM product_boms WHERE product_item_id = ?", (target_prod_id,))
-    except Exception:
-        cursor.execute("ALTER TABLE product_boms ADD COLUMN markup_percent REAL DEFAULT 0.0")
-        conn_dialog.commit()
-        cursor.execute("SELECT id, total_material_cost, total_labor_cost, total_production_cost, markup_percent FROM product_boms WHERE product_item_id = ?", (target_prod_id,))
-
+    # GUARANTEED BOM ID FETCH / CONSOLIDATION
+    bom_id = get_or_create_product_bom(conn_dialog, target_prod_id, cust_dict.get(sel_cust_name))
+    
+    cursor.execute("SELECT total_material_cost, total_labor_cost, total_production_cost, markup_percent FROM product_boms WHERE id = ?", (bom_id,))
     bom_row = cursor.fetchone()
-    if not bom_row:
-        cursor.execute("INSERT INTO product_boms (product_item_id, customer_id) VALUES (?, ?)", (target_prod_id, cust_dict.get(sel_cust_name)))
-        conn_dialog.commit()
-        bom_id = cursor.lastrowid
-        curr_markup = 0.0
-    else:
-        bom_id = bom_row[0]
-        curr_markup = safe_float(bom_row[4])
+    curr_markup = safe_float(bom_row[3]) if bom_row else 0.0
 
     st.divider()
     
@@ -1106,7 +1107,7 @@ def edit_facility_dialog(fac_id):
             if c_del.form_submit_button("🗑️ Delete", use_container_width=True):
                 cursor.execute("DELETE FROM production_facilities WHERE id = ?", (fac_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
 
-# DIALOG MODALS FOR OPERATIONS (WITH MINUTES ADDED AS COST UNIT)
+# DIALOG MODALS FOR OPERATIONS
 @st.dialog("➕ Add Manufacturing Operation")
 def add_operation_dialog():
     conn_dialog = get_db()
