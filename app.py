@@ -1,6 +1,7 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
+import re
 from datetime import datetime
 
 # 1. Page Configuration
@@ -43,18 +44,21 @@ def init_custom_db():
     );
     """)
 
-    # Raw Materials, Buy Parts & Finished Goods Table
+    # Stock Items Table (Extended with Sub-Groups & Specific Weight)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS stock_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         code VARCHAR(100) UNIQUE NOT NULL,
         name VARCHAR(255) NOT NULL,
         category VARCHAR(50) DEFAULT 'RAW MATERIAL',
+        sub_group VARCHAR(100) DEFAULT 'General',
         supplier_id INTEGER,
         unit_id INTEGER NOT NULL,
         warehouse_id INTEGER NOT NULL,
         purchase_price REAL DEFAULT 0.0,
         selling_price REAL DEFAULT 0.0,
+        specific_weight REAL DEFAULT 0.0,
+        weight_unit VARCHAR(20) DEFAULT 'kg',
         current_stock REAL DEFAULT 0.0,
         min_stock REAL DEFAULT 0.0,
         FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE SET NULL,
@@ -66,7 +70,7 @@ def init_custom_db():
     # Populate Default Units
     cursor.execute("SELECT COUNT(*) FROM units")
     if cursor.fetchone()[0] == 0:
-        for c, n in [('pcs', 'Pieces'), ('kg', 'Kilograms'), ('m2', 'Square Meters'), ('l', 'Liters'), ('m', 'Linear Meters')]:
+        for c, n in [('Ml', 'Metri Liniari'), ('kg', 'Kilograme'), ('pcs', 'Pieces'), ('m2', 'Square Meters'), ('l', 'Liters')]:
             cursor.execute("INSERT INTO units (code, name) VALUES (?, ?)", (c, n))
 
     # Populate Default Warehouses
@@ -78,7 +82,7 @@ def init_custom_db():
     # Populate Default Suppliers
     cursor.execute("SELECT COUNT(*) FROM suppliers")
     if cursor.fetchone()[0] == 0:
-        for c, n, cp, p, e, lt in [('SUP001', 'Powder Coating Supplier SRL', 'John Smith', '+40722111222', 'orders@coating.com', 3), ('SUP002', 'Steel & Metal Producer SA', 'Mary Doe', '+40733444555', 'sales@steel.com', 5)]:
+        for c, n, cp, p, e, lt in [('SUP001', 'Baurom Construct SRL', 'John Smith', '+40722111222', 'orders@baurom.ro', 3), ('SUP002', 'LemnConfex SRL', 'Mary Doe', '+40733444555', 'sales@lemnconfex.ro', 5)]:
             cursor.execute("INSERT INTO suppliers (code, name, contact_person, phone, email, lead_time_days) VALUES (?, ?, ?, ?, ?, ?)", (c, n, cp, p, e, lt))
 
     conn.commit()
@@ -89,7 +93,135 @@ init_custom_db()
 def get_db():
     return sqlite3.connect('can_prod_v2.db')
 
-# Function to Import MRPeasy CSV Into Stock
+# Intelligent Item Classifier & Name Cleaner for MRPeasy Import
+def clean_and_classify_item(part_no, desc, group_num):
+    text_upper = f"{part_no} {desc}".upper()
+    buy_keywords = [
+        'PIULITA', 'SURUB', 'SAIBA', 'CONEXPAND', 'CAPAC', 'TREPTA', 'ZINCAT 1000X', 'PICIOR',
+        'POLICARBONAT', 'MANA CURENTA', 'CUTIE', 'M8_', 'M10_', 'M12_', 'M8X', 'M10X', 'M12X',
+        'ANCORA', 'FOLIE', 'T35 X 0.5MM', 'A00891', 'A00755', 'A00625'
+    ]
+
+    if group_num == 'PRODUSE FINITE' or ('A00' in part_no and group_num == 'PRODUSE FINITE') or ('A01' in part_no and group_num == 'PRODUSE FINITE'):
+        return 'PRODUSE FINITE', 'FINISHED GOOD', f"{part_no} - {desc}"
+    
+    elif group_num == 'BUY PARTS' or any(k in text_upper for k in buy_keywords):
+        category = 'BUY PART'
+        sub_group = 'Buy Parts'
+        
+        if 'ZINCAT 1000X' in text_upper:
+            dim = part_no.replace('Zincat ', '').strip()
+            name = f"Treapta Gratar Zincat {dim} mm"
+        elif 'PIULITA NIT' in text_upper:
+            dim = part_no.replace('Piulita Nit ', '').strip()
+            name = f"Piulita Nit {dim}"
+        elif 'M8_CU_FLANSA' in text_upper:
+            name = "Piulita Hexagonala M8 cu Flansa"
+        elif 'M8X40' in text_upper:
+            name = "Surub M8x40 Complet Filetat"
+        elif 'M8X110' in text_upper:
+            name = "Surub M8x110 Complet Filetat"
+        elif 'M12X70' in text_upper:
+            name = "Surub Metric M12x70"
+        elif 'M10X40' in text_upper:
+            name = "Surub Metric M10x40"
+        elif 'PIULITA' in text_upper:
+            dim = part_no if 'M' in part_no else desc
+            name = f"Piulita {dim.replace('Piulita ', '')}"
+        elif 'SAIBA' in text_upper:
+            dim = part_no if 'M' in part_no else desc
+            name = f"Saiba Plana {dim.replace('saiba', '').replace('Saiba', '').strip()}"
+        elif 'PICIOR REGLABIL' in text_upper:
+            name = f"Picior Reglabil {part_no.replace('Picior Reglabil ', '')}"
+        elif 'CONEXPAND' in text_upper:
+            name = f"Conexpand Ancora Metalica {part_no.replace('Conexpand ', '')}"
+        elif 'CAPAC PLASTIC 30X10' in text_upper:
+            name = "Capac Plastic Oblong 30x10 mm"
+        elif '30X30' in text_upper and 'CAPAC' in text_upper:
+            name = "Capac Plastic Patrat 30x30 mm cu Filet M8"
+        elif '50X50' in text_upper and 'CAPAC' in text_upper or part_no == 'Capac':
+            name = "Capac Plastic Patrat 50x50 mm cu Filet M8"
+        elif 'CAPAC FI 60' in text_upper or 'A00891' in text_upper:
+            name = "Capac Plastic Rotund FI 60 mm Simplu"
+        elif 'T35' in text_upper:
+            name = "Tabla Cutata T35 x 0.5 mm + Folie Anticondens DryStop"
+        elif 'POLICARBONAT' in text_upper:
+            name = "Placa Policarbonat 3 Pereti (6000x2100 mm)"
+        elif 'MANA CURENTA' in text_upper or 'A01841' in text_upper:
+            name = "Mana Curenta din Lemn de Stejar"
+        elif 'CUTIE CARTON' in text_upper or 'A00755' in text_upper:
+            name = "Cutie Carton Ambalare Produse"
+        else:
+            name = f"{part_no} - {desc}"
+        return sub_group, category, name
+
+    else:
+        category = 'RAW MATERIAL'
+        europrofile_keywords = ['UPN', 'UNP', 'UPE', 'IPE', 'HEA', 'HEB', 'CORNIER', 'BARA', 'ROTUND', 'PATRAT', 'LAT', 'PLATBANDA', 'C 150X50', 'FI14', 'FI12', 'FI10', 'FI 25', 'FI 20', 'FI 8']
+        
+        if any(k in text_upper for k in europrofile_keywords) and not ('TEAVA' in text_upper or 'TV' in text_upper or 'ALU_' in text_upper):
+            sub_group = 'Europrofile'
+            if 'UPN' in text_upper or 'UNP' in text_upper or 'UPE' in text_upper:
+                name = f"Profil Otel {part_no}"
+            elif 'IPE' in text_upper or desc == 'IPE':
+                dim = part_no if 'IPE' in part_no else f"IPE {part_no}"
+                name = f"Profil Europrofil {dim}"
+            elif 'HEA' in text_upper or desc == 'HEA':
+                dim = part_no if 'HEA' in part_no else f"HEA {part_no}"
+                name = f"Profil Europrofil {dim}"
+            elif 'CORNIER' in text_upper:
+                dim = part_no.replace(' CORNIER', '').replace('Cornier ', '').replace('60X60X6 CORNIER', '60x60x6')
+                name = f"Profil Cornier Otel {dim} mm"
+            elif 'ROTUND FI' in text_upper or part_no.startswith('Fi') or part_no.startswith('FI') or part_no.startswith('Bara fi'):
+                dim = part_no.replace('Rotund FI', '').replace('Bara fi ', '').replace('Fi', '').replace('FI ', '').replace('FI', '').strip()
+                name = f"Bara Rotunda Plina FI {dim} mm"
+            elif 'PATRAT' in text_upper:
+                dim = part_no.replace(' Patrat', '')
+                name = f"Bara Patrata Plina {dim} mm"
+            elif 'LAT' in text_upper or 'PLATBANDA' in text_upper:
+                dim = part_no.replace('LAT ', '').replace('A00703 PLATBANDA', '80x4')
+                name = f"Platbanda Otel {dim} mm"
+            elif 'C 150X50' in text_upper:
+                name = "Profil C Zincat 150x50x30x2 mm"
+            else:
+                name = f"Profil Otel {part_no}"
+
+        elif any(k in text_upper for k in ['TB', 'TABLA', 'STRIATA', 'DX51D', 'PL 100X10']):
+            sub_group = 'Tabla'
+            if 'STRIATA' in text_upper:
+                name = "Tabla Striata 3 mm"
+            elif 'ZINCATA' in text_upper or 'DX51D' in text_upper:
+                thick = part_no.replace('Tb', '').replace(' mm Zincata', '').strip()
+                name = f"Tabla Zincata {thick} mm (DX51D)"
+            elif 'PL 100X10' in text_upper:
+                name = "Platbanda / Tabla 100x10 mm"
+            else:
+                thick = part_no.replace('Tb', '').replace(' mm', '').replace('.', '').strip()
+                name = f"Tabla Neagra LBR {thick} mm"
+
+        elif any(k in text_upper for k in ['TV', 'TEAVA', 'TEVA', 'ALU_', 'FI 219', 'FI 220', 'FI27', 'FI 76', 'FI 48', 'FI 42', 'FI 33', 'FI 28', '88,9X2', '18X2_PRECIZI', 'A01349']) or re.search(r'^\d+x\d+x[\d\.,]+', part_no.lower()):
+            sub_group = 'Teava'
+            if 'ALU_' in text_upper:
+                dim = part_no.replace('ALU_', '')
+                name = f"Teava Aluminiu Rectangulara {dim} mm"
+            elif 'OVALA' in text_upper:
+                name = f"Teava Ovala {part_no.replace('Teava ovala ', '')} mm"
+            elif 'PRECIZIE' in text_upper:
+                name = "Teava Otel Precizie FI 18x2 mm"
+            elif 'FI' in text_upper or 'FI' in desc.upper():
+                dim = part_no.replace('TV FI', '').replace('Tv Fi', '').replace('TV Fi', '').replace('TV Fi ', '').replace('Teava ', '').replace('tv fi ', '').replace('TV ', '').replace('Fi ', '').strip()
+                name = f"Teava Rotunda FI {dim} mm"
+            else:
+                dim = part_no.replace('Teava ', '').replace(' Teava', '').replace(' TV', '').strip()
+                name = f"Teava Rectangulara / Patrata {dim} mm"
+        else:
+            sub_group = 'Raw Materials Diverse'
+            name = f"{part_no} - {desc}"
+
+    name = re.sub(r'\s+', ' ', name).strip()
+    return sub_group, category, name
+
+# Function to Import MRPeasy CSV Into Custom Stock Database
 def import_mrpeasy_items(df):
     conn = get_db()
     cursor = conn.cursor()
@@ -102,21 +234,16 @@ def import_mrpeasy_items(df):
         if not code or code == 'nan':
             continue
 
-        name = str(row.get('part description', row.get('description', row.get('name', code)))).strip()
+        raw_desc = str(row.get('part description', row.get('description', row.get('name', code)))).strip()
+        group_num = str(row.get('group number', row.get('group name', row.get('group', '')))).strip()
         
-        # Category Mapping
-        group = str(row.get('group number', row.get('group name', row.get('group', '')))).upper()
-        if 'BUY' in group:
-            category = 'BUY PART'
-        elif 'SUB' in group:
-            category = 'SUBASSEMBLY'
-        elif 'FINISH' in group or 'PRODUS' in group:
-            category = 'FINISHED GOOD'
-        else:
-            category = 'RAW MATERIAL'
+        # Clean Description & Sub-Group Classification
+        sub_group, category, clean_name = clean_and_classify_item(code, raw_desc, group_num)
 
         # Unit of Measure
         u_code = str(row.get('uom', row.get('unit of measure', row.get('unit', 'pcs')))).strip()
+        if not u_code or u_code == 'nan': u_code = 'pcs'
+        
         cursor.execute("SELECT id FROM units WHERE code = ?", (u_code,))
         u_row = cursor.fetchone()
         if u_row:
@@ -125,7 +252,7 @@ def import_mrpeasy_items(df):
             cursor.execute("INSERT INTO units (code, name) VALUES (?, ?)", (u_code, u_code))
             unit_id = cursor.lastrowid
 
-        # Warehouse / Location
+        # Warehouse / Storage Location
         w_name = str(row.get('default storage location', row.get('storage location', row.get('location', 'Main Warehouse')))).strip()
         if not w_name or w_name == 'nan': w_name = 'Main Warehouse'
         
@@ -138,12 +265,30 @@ def import_mrpeasy_items(df):
             cursor.execute("INSERT INTO warehouses (code, name, location_type) VALUES (?, ?, ?)", (w_code, w_name, 'Internal Warehouse'))
             warehouse_id = cursor.lastrowid
 
-        # Numerical Values
+        # Supplier / Vendor Mapping
+        v_name = str(row.get('vendor name', '')).strip()
+        supplier_id = None
+        if v_name and v_name != 'nan':
+            cursor.execute("SELECT id FROM suppliers WHERE name = ?", (v_name,))
+            s_row = cursor.fetchone()
+            if s_row:
+                supplier_id = s_row[0]
+            else:
+                cursor.execute("INSERT INTO suppliers (code, name) VALUES (?, ?)", (f"SUP-{v_name[:5].upper()}", v_name))
+                supplier_id = cursor.lastrowid
+
+        # Numeric Fields
         try: price = float(row.get('cost', row.get('cost price', 0)))
         except: price = 0.0
 
         try: sell_price = float(row.get('selling price', row.get('price', 0)))
         except: sell_price = 0.0
+
+        try: weight_val = float(row.get('weight', 0))
+        except: weight_val = 0.0
+
+        weight_unit = str(row.get('unit of weight', 'kg')).strip()
+        if not weight_unit or weight_unit == 'nan': weight_unit = 'kg'
 
         try: stock = float(row.get('in stock', row.get('available', row.get('stoc', 0))))
         except: stock = 0.0
@@ -155,15 +300,15 @@ def import_mrpeasy_items(df):
         ex = cursor.fetchone()
         if ex:
             cursor.execute("""
-                UPDATE stock_items SET name=?, category=?, unit_id=?, warehouse_id=?, purchase_price=?, selling_price=?, current_stock=?, min_stock=?
+                UPDATE stock_items SET name=?, category=?, sub_group=?, supplier_id=?, unit_id=?, warehouse_id=?, purchase_price=?, selling_price=?, specific_weight=?, weight_unit=?, current_stock=?, min_stock=?
                 WHERE code=?
-            """, (name, category, unit_id, warehouse_id, price, sell_price, stock, min_st, code))
+            """, (clean_name, category, sub_group, supplier_id, unit_id, warehouse_id, price, sell_price, weight_val, weight_unit, stock, min_st, code))
             updated_count += 1
         else:
             cursor.execute("""
-                INSERT INTO stock_items (code, name, category, unit_id, warehouse_id, purchase_price, selling_price, current_stock, min_stock)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (code, name, category, unit_id, warehouse_id, price, sell_price, stock, min_st))
+                INSERT INTO stock_items (code, name, category, sub_group, supplier_id, unit_id, warehouse_id, purchase_price, selling_price, specific_weight, weight_unit, current_stock, min_stock)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (code, clean_name, category, sub_group, supplier_id, unit_id, warehouse_id, price, sell_price, weight_val, weight_unit, stock, min_st))
             imported_count += 1
 
     conn.commit()
@@ -175,7 +320,7 @@ query_params = st.query_params
 active_page = query_params.get("page", "Home")
 active_subtab = query_params.get("subtab", "Raw_Materials")
 
-# 4. Aqua Minimalist Styling With 3D Big Buttons & Metric Cards
+# 4. Aqua Minimalist Styling With 3D Big Buttons
 st.markdown("""
 <style>
     .stApp { background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
@@ -378,6 +523,61 @@ st.markdown(f"""
 
 conn = get_db()
 
+# Dialog Modal Pop-Up pentru Adăugare Manuală Materie Primă
+@st.dialog("➕ Add New Raw Material / Item")
+def add_raw_material_dialog():
+    with st.form("add_raw_material_form"):
+        st.subheader("Item Characteristics & Specifications")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            code = st.text_input("Part No. / Item Code *", placeholder="e.g. TV FI 48.3x4")
+            name = st.text_input("Part Description / Name *", placeholder="e.g. Teava Rotunda FI 48.3x4 mm")
+            sub_group = st.selectbox("Main Sub-Group *", ["Tabla", "Teava", "Europrofile", "Raw Materials Diverse"])
+            
+            df_u_opts = pd.read_sql_query("SELECT id, code, name FROM units ORDER BY code", conn)
+            u_dict = {f"{r['code']} ({r['name']})": r['id'] for _, r in df_u_opts.iterrows()}
+            selected_u = st.selectbox("Unit of Measure (UoM) *", list(u_dict.keys()))
+
+            df_s_opts = pd.read_sql_query("SELECT id, name FROM suppliers ORDER BY name", conn)
+            s_dict = {r['name']: r['id'] for _, r in df_s_opts.iterrows()}
+            selected_s = st.selectbox("Preferred Supplier", list(s_dict.keys()) if s_dict else ["No Supplier"])
+
+        with col2:
+            price = st.number_input("Purchase Price (€)", min_value=0.0, value=0.0, step=0.1)
+            selling_p = st.number_input("Selling Price (€)", min_value=0.0, value=0.0, step=0.1)
+            
+            col_w1, col_w2 = st.columns([2, 1])
+            with col_w1:
+                spec_weight = st.number_input("Specific Weight / Unit", min_value=0.0, value=0.0, step=0.1)
+            with col_w2:
+                w_unit = st.selectbox("Weight Unit", ["kg", "lbs", "g"], index=0)
+
+            df_w_opts = pd.read_sql_query("SELECT id, name FROM warehouses ORDER BY name", conn)
+            w_dict = {r['name']: r['id'] for _, r in df_w_opts.iterrows()}
+            selected_w = st.selectbox("Initial Warehouse Location", list(w_dict.keys()))
+
+            stock_qty = st.number_input("Initial Stock Quantity", min_value=0.0, value=0.0)
+            min_stock_qty = st.number_input("Reorder Point / Min Stock", min_value=0.0, value=0.0)
+
+        st.divider()
+        if st.form_submit_button("💾 Save Raw Material", type="primary", use_container_width=True):
+            if code and name:
+                try:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        INSERT INTO stock_items 
+                        (code, name, category, sub_group, supplier_id, unit_id, warehouse_id, purchase_price, selling_price, specific_weight, weight_unit, current_stock, min_stock)
+                        VALUES (?, ?, 'RAW MATERIAL', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (code.strip(), name.strip(), sub_group, s_dict.get(selected_s), u_dict.get(selected_u), w_dict.get(selected_w), price, selling_p, spec_weight, w_unit, stock_qty, min_stock_qty))
+                    conn.commit()
+                    st.success(f"Material {code} saved successfully!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+            else:
+                st.warning("Please fill in Part No. and Name!")
+
 # ==========================================
 # 1. HOME SCREEN (LAUNCHPAD)
 # ==========================================
@@ -412,7 +612,7 @@ if active_page == "Home":
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. STOCK MODULE (WITH RAW MATERIALS, BUY PARTS & FINISHED GOODS)
+# 2. STOCK MODULE (SYNTHESIZED & STYLED)
 # ==========================================
 elif active_page == "Stock":
     
@@ -478,55 +678,22 @@ elif active_page == "Stock":
     if active_subtab == "Raw_Materials" or active_subtab == "Items":
         c_head, c_btn1, c_btn2 = st.columns([6, 2, 2])
         with c_head:
-            st.markdown("##### Raw Materials Inventory")
+            st.markdown("##### Raw Materials Inventory (Tabla, Teava, Europrofile)")
         
         with c_btn1:
-            with st.popover("➕ Add Raw Material", use_container_width=True):
-                with st.form("add_raw_form"):
-                    code = st.text_input("Part No. / Item Code *")
-                    name = st.text_input("Part Description *")
-                    
-                    df_s_opts = pd.read_sql_query("SELECT id, name FROM suppliers ORDER BY name", conn)
-                    s_dict = {r['name']: r['id'] for _, r in df_s_opts.iterrows()}
-                    selected_s = st.selectbox("Preferred Supplier", list(s_dict.keys()) if s_dict else ["No Supplier"])
-                    
-                    df_u_opts = pd.read_sql_query("SELECT id, code, name FROM units ORDER BY code", conn)
-                    u_dict = {f"{r['code']} ({r['name']})": r['id'] for _, r in df_u_opts.iterrows()}
-                    selected_u = st.selectbox("Unit of Measure", list(u_dict.keys()))
-
-                    df_w_opts = pd.read_sql_query("SELECT id, name FROM warehouses ORDER BY name", conn)
-                    w_dict = {r['name']: r['id'] for _, r in df_w_opts.iterrows()}
-                    selected_w = st.selectbox("Initial Warehouse", list(w_dict.keys()))
-
-                    price = st.number_input("Purchase Price (€)", min_value=0.0, value=0.0, step=0.5)
-                    stock_qty = st.number_input("Current Stock Quantity", min_value=0.0, value=0.0)
-                    min_stock_qty = st.number_input("Reorder Point / Min. Stock", min_value=0.0, value=0.0)
-
-                    if st.form_submit_button("💾 Save Raw Material"):
-                        if code and name:
-                            try:
-                                cursor = conn.cursor()
-                                cursor.execute("""
-                                    INSERT INTO stock_items 
-                                    (code, name, category, supplier_id, unit_id, warehouse_id, purchase_price, current_stock, min_stock)
-                                    VALUES (?, ?, 'RAW MATERIAL', ?, ?, ?, ?, ?, ?)
-                                """, (code.strip(), name.strip(), s_dict.get(selected_s), u_dict.get(selected_u), w_dict.get(selected_w), price, stock_qty, min_stock_qty))
-                                conn.commit()
-                                st.success(f"Raw Material {code} saved successfully!")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Error: {e}")
+            if st.button("➕ Add Raw Material (Pop-Up)", use_container_width=True, type="primary"):
+                add_raw_material_dialog()
 
         with c_btn2:
             with st.popover("↑ Import MRPeasy CSV", use_container_width=True):
-                st.caption("Upload the CSV file exported from MRPeasy to import materials automatically.")
+                st.caption("Upload articles_20260810 (1).csv exported from MRPeasy.")
                 csv_file = st.file_uploader("Upload CSV", type=['csv'], key="import_items_csv")
                 if csv_file is not None:
                     try:
                         df_up = pd.read_csv(csv_file)
                         st.write("File Preview:")
                         st.dataframe(df_up.head(3))
-                        if st.button("🚀 Execute Import"):
+                        if st.button("🚀 Execute Smart Import"):
                             ins, upd = import_mrpeasy_items(df_up)
                             st.success(f"Import Successful! Added: {ins}, Updated: {upd}")
                             st.rerun()
@@ -534,17 +701,25 @@ elif active_page == "Stock":
                         st.error(f"Import Error: {e}")
 
         st.write("")
-        search_raw = st.text_input("🔍 Search Raw Materials by Part No. or Description", placeholder="Type to filter...", label_visibility="collapsed")
+        
+        # Sub-Group Filter & Search
+        f1, f2 = st.columns([6, 4])
+        with f1:
+            search_raw = st.text_input("🔍 Search Raw Materials by Part No. or Description", placeholder="Type to search...", label_visibility="collapsed")
+        with f2:
+            filter_sub = st.selectbox("Filter Sub-Group", ["All Sub-Groups", "Tabla", "Teava", "Europrofile", "Raw Materials Diverse"], label_visibility="collapsed")
 
         q_raw = """
             SELECT 
                 si.id as ID,
                 si.code as 'Part No.',
                 si.name as 'Part Description',
+                si.sub_group as 'Main Sub-Group',
                 s.name as 'Preferred Supplier',
                 u.code as 'UoM',
-                w.name as 'Warehouse',
+                si.specific_weight as 'Spec. Weight (kg/UoM)',
                 si.purchase_price as 'Purchase Price (€)',
+                si.selling_price as 'Selling Price (€)',
                 si.current_stock as 'In Stock',
                 si.min_stock as 'Reorder Point'
             FROM stock_items si
@@ -557,15 +732,31 @@ elif active_page == "Stock":
         if search_raw:
             q_raw += " AND (si.code LIKE ? OR si.name LIKE ?)"
             params_raw.extend([f"%{search_raw}%", f"%{search_raw}%"])
+        if filter_sub != "All Sub-Groups":
+            q_raw += " AND si.sub_group = ?"
+            params_raw.append(filter_sub)
+
+        q_raw += " ORDER BY si.sub_group, si.code"
 
         df_raw = pd.read_sql_query(q_raw, conn, params=params_raw)
-        st.dataframe(df_raw, use_container_width=True, hide_index=True)
+        st.dataframe(
+            df_raw, 
+            use_container_width=True, 
+            hide_index=True,
+            column_config={
+                "Purchase Price (€)": st.column_config.NumberColumn("Purchase Price (€)", format="%.2f €"),
+                "Selling Price (€)": st.column_config.NumberColumn("Selling Price (€)", format="%.2f €"),
+                "Spec. Weight (kg/UoM)": st.column_config.NumberColumn("Spec. Weight", format="%.2f kg"),
+                "In Stock": st.column_config.NumberColumn("In Stock", format="%.2f"),
+                "Reorder Point": st.column_config.NumberColumn("Reorder Point", format="%.2f")
+            }
+        )
 
     # --- TAB 2: BUY PARTS ---
     elif active_subtab == "Buy_Parts":
         c_head, c_btn1 = st.columns([8, 2])
         with c_head:
-            st.markdown("##### Purchased Parts (Buy Parts)")
+            st.markdown("##### Purchased Parts & Fasteners (Buy Parts)")
         
         with c_btn1:
             with st.popover("➕ Add Buy Part", use_container_width=True):
@@ -585,9 +776,9 @@ elif active_page == "Stock":
                     w_dict = {r['name']: r['id'] for _, r in df_w_opts.iterrows()}
                     selected_w = st.selectbox("Initial Warehouse", list(w_dict.keys()))
 
-                    price = st.number_input("Purchase Price (€)", min_value=0.0, value=0.0, step=0.5)
+                    price = st.number_input("Purchase Price (€)", min_value=0.0, value=0.0, step=0.1)
+                    sell_p = st.number_input("Selling Price (€)", min_value=0.0, value=0.0, step=0.1)
                     stock_qty = st.number_input("Current Stock Quantity", min_value=0.0, value=0.0)
-                    min_stock_qty = st.number_input("Reorder Point / Min. Stock", min_value=0.0, value=0.0)
 
                     if st.form_submit_button("💾 Save Buy Part"):
                         if code and name:
@@ -595,9 +786,9 @@ elif active_page == "Stock":
                                 cursor = conn.cursor()
                                 cursor.execute("""
                                     INSERT INTO stock_items 
-                                    (code, name, category, supplier_id, unit_id, warehouse_id, purchase_price, current_stock, min_stock)
-                                    VALUES (?, ?, 'BUY PART', ?, ?, ?, ?, ?, ?)
-                                """, (code.strip(), name.strip(), s_dict.get(selected_s), u_dict.get(selected_u), w_dict.get(selected_w), price, stock_qty, min_stock_qty))
+                                    (code, name, category, sub_group, supplier_id, unit_id, warehouse_id, purchase_price, selling_price, current_stock)
+                                    VALUES (?, ?, 'BUY PART', 'Buy Parts', ?, ?, ?, ?, ?, ?)
+                                """, (code.strip(), name.strip(), s_dict.get(selected_s), u_dict.get(selected_u), w_dict.get(selected_w), price, sell_p, stock_qty))
                                 conn.commit()
                                 st.success(f"Buy Part {code} saved successfully!")
                                 st.rerun()
@@ -616,8 +807,8 @@ elif active_page == "Stock":
                 u.code as 'UoM',
                 w.name as 'Warehouse',
                 si.purchase_price as 'Purchase Price (€)',
-                si.current_stock as 'In Stock',
-                si.min_stock as 'Reorder Point'
+                si.selling_price as 'Selling Price (€)',
+                si.current_stock as 'In Stock'
             FROM stock_items si
             LEFT JOIN suppliers s ON si.supplier_id = s.id
             LEFT JOIN units u ON si.unit_id = u.id
