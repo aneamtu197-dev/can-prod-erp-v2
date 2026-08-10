@@ -29,9 +29,9 @@ def reset_buy_filters_callback():
 def reset_fg_filters_callback():
     for k in ["f_fg_code", "f_fg_name", "f_fg_cat"]: st.session_state[k] = "All Categories" if "cat" in k else ""
 
-# DIALOG MODAL FOR BULK DELETE
+# DIALOG MODAL FOR BULK DELETE STOCK ITEMS
 @st.dialog("⚠️ Confirm Bulk Delete")
-def bulk_delete_dialog(item_ids):
+def bulk_delete_stock_dialog(item_ids):
     st.error(f"Are you sure you want to delete {len(item_ids)} item(s)? This action cannot be undone.")
     c1, c2 = st.columns(2)
     if c1.button("Cancel", use_container_width=True):
@@ -42,6 +42,21 @@ def bulk_delete_dialog(item_ids):
         cursor.execute(f"DELETE FROM stock_items WHERE id IN ({placeholders})", item_ids)
         conn.commit()
         st.success("Items deleted successfully!")
+        st.rerun()
+
+# DIALOG MODAL FOR BULK DELETE SUPPLIERS
+@st.dialog("⚠️ Confirm Bulk Delete")
+def bulk_delete_suppliers_dialog(item_ids):
+    st.error(f"Are you sure you want to delete {len(item_ids)} supplier(s)? This action cannot be undone.")
+    c1, c2 = st.columns(2)
+    if c1.button("Cancel", use_container_width=True):
+        st.rerun()
+    if c2.button("Yes, Delete All", type="primary", use_container_width=True):
+        cursor = conn.cursor()
+        placeholders = ",".join(["?"] * len(item_ids))
+        cursor.execute(f"DELETE FROM suppliers WHERE id IN ({placeholders})", item_ids)
+        conn.commit()
+        st.success("Suppliers deleted successfully!")
         st.rerun()
 
 # DIALOG MODAL POP-UP FOR ADDING STOCK ITEMS
@@ -216,7 +231,6 @@ def edit_supplier_dialog(supp_id):
             if c_del.form_submit_button("🗑️ Delete", use_container_width=True):
                 cursor.execute("DELETE FROM suppliers WHERE id = ?", (supp_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
 
-
 # ==========================================
 # PAGE ROUTING
 # ==========================================
@@ -236,6 +250,7 @@ elif active_page == "Stock":
         subtabs_html += f'<a href="?page=Stock&subtab={t_k}" target="_self" class="{"mrp-subtab-active" if active_subtab == t_k else "mrp-subtab"}">{t_l}</a>'
     st.markdown(subtabs_html + '</div>', unsafe_allow_html=True)
 
+    # --- TAB 1: RAW MATERIALS ---
     if active_subtab == "Raw_Materials" or active_subtab == "Items":
         c1, c2, c3 = st.columns([6, 2, 2])
         with c1: st.markdown("##### Raw Materials Inventory")
@@ -268,6 +283,7 @@ elif active_page == "Stock":
         
         df_raw = pd.read_sql_query(q_raw, conn, params=params)
         sel = st.dataframe(df_raw, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_raw")
+        
         if sel and len(sel.selection.rows) > 0:
             selected_ids = [int(df_raw.iloc[i]['ID']) for i in sel.selection.rows]
             st.info(f"☑️ Selected {len(selected_ids)} item(s)")
@@ -276,7 +292,7 @@ elif active_page == "Stock":
                 if len(selected_ids) == 1:
                     if st.button("✏️ Edit Selected", use_container_width=True): edit_item_dialog(selected_ids[0])
             with col_a2:
-                if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_dialog(selected_ids)
+                if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_stock_dialog(selected_ids)
 
     # --- TAB 2: BUY PARTS ---
     elif active_subtab == "Buy_Parts":
@@ -300,6 +316,7 @@ elif active_page == "Stock":
         
         df_buy = pd.read_sql_query(q_buy, conn, params=params)
         sel = st.dataframe(df_buy, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_buy")
+        
         if sel and len(sel.selection.rows) > 0:
             selected_ids = [int(df_buy.iloc[i]['ID']) for i in sel.selection.rows]
             st.info(f"☑️ Selected {len(selected_ids)} item(s)")
@@ -308,14 +325,14 @@ elif active_page == "Stock":
                 if len(selected_ids) == 1:
                     if st.button("✏️ Edit Selected", use_container_width=True): edit_item_dialog(selected_ids[0])
             with col_a2:
-                if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_dialog(selected_ids)
+                if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_stock_dialog(selected_ids)
 
     # --- TAB 3: FINISHED GOODS ---
     elif active_subtab == "Finished_Goods":
         st.markdown("##### Finished Goods & Subassemblies")
         if st.button("➕ Add Item", type="primary"): add_new_item_dialog("Finished Good / Subassembly")
         st.write("")
-
+        
         st.markdown('<div class="filter-panel">', unsafe_allow_html=True)
         col_fg1, col_fg2, col_fg3, col_fg4 = st.columns([3, 4, 3, 2])
         f_fg_code = col_fg1.text_input("Product Code", key="f_fg_code")
@@ -332,6 +349,7 @@ elif active_page == "Stock":
 
         df_fin = pd.read_sql_query(q_fin, conn, params=params)
         sel = st.dataframe(df_fin, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_fin")
+        
         if sel and len(sel.selection.rows) > 0:
             selected_ids = [int(df_fin.iloc[i]['ID']) for i in sel.selection.rows]
             st.info(f"☑️ Selected {len(selected_ids)} item(s)")
@@ -340,7 +358,7 @@ elif active_page == "Stock":
                 if len(selected_ids) == 1:
                     if st.button("✏️ Edit Selected", use_container_width=True): edit_item_dialog(selected_ids[0])
             with col_a2:
-                if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_dialog(selected_ids)
+                if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_stock_dialog(selected_ids)
 
     # --- TAB 4: SUPPLIERS ---
     elif active_subtab == "Suppliers":
@@ -353,17 +371,24 @@ elif active_page == "Stock":
         st.write("")
         df_s = pd.read_sql_query("SELECT id as ID, code as Code, name as 'Supplier Name', supplier_type as 'Supplier Type', contact_person as 'Contact Person', phone as Phone, email as Email, lead_time_days as 'Lead Time (Days)' FROM suppliers ORDER BY name", conn)
         
-        st.caption("💡 Click on any row below to edit the supplier details.")
-        sel_supp = st.dataframe(df_s, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="t_supp", column_config={"ID": None})
+        sel_supp = st.dataframe(df_s, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_supp", column_config={"ID": None})
         
         if sel_supp and len(sel_supp.selection.rows) > 0:
-            selected_idx = sel_supp.selection.rows[0]
-            target_id = int(df_s.iloc[selected_idx]['ID'])
-            edit_supplier_dialog(target_id)
+            selected_ids = [int(df_s.iloc[i]['ID']) for i in sel_supp.selection.rows]
+            st.info(f"☑️ Selected {len(selected_ids)} supplier(s)")
+            col_a1, col_a2, _ = st.columns([2, 2, 8])
+            with col_a1:
+                if len(selected_ids) == 1:
+                    if st.button("✏️ Edit Selected", use_container_width=True): 
+                        edit_supplier_dialog(selected_ids[0])
+            with col_a2:
+                if st.button("🗑️ Delete Selected", use_container_width=True): 
+                    bulk_delete_suppliers_dialog(selected_ids)
 
     # --- TAB 5: WAREHOUSES ---
     elif active_subtab == "Warehouses":
         st.markdown("##### Warehouses"); df_w = pd.read_sql_query("SELECT * FROM warehouses", conn); st.dataframe(df_w, hide_index=True)
+    
     # --- TAB 6: UNITS ---
     elif active_subtab == "Units":
         st.markdown("##### Units"); df_u = pd.read_sql_query("SELECT * FROM units", conn); st.dataframe(df_u, hide_index=True)
