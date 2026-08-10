@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import requests
 from datetime import datetime
+import io
+from fpdf import FPDF
 
 from db import (
     init_custom_db, get_db, generate_unique_item_code, generate_unique_customer_code, 
@@ -43,6 +45,128 @@ conn = get_db()
 # Session State for Dynamic Dropdown Reset
 if "bom_select_version" not in st.session_state:
     st.session_state["bom_select_version"] = 0
+
+# --- PDF GENERATION FUNCTIONS ---
+class PDF(FPDF):
+    def header(self):
+        self.set_font('Helvetica', 'B', 14)
+        self.cell(0, 8, 'CAN PROD SRL - SYSTEM ERP', 0, 1, 'C')
+        self.set_font('Helvetica', '', 9)
+        self.cell(0, 5, 'Document Generat Automat | Fisa Tehnologica & Bon de Consum', 0, 1, 'C')
+        self.line(10, 22, 200, 22)
+        self.ln(5)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font('Helvetica', 'I', 8)
+        self.cell(0, 10, f'Pagina {self.page_no()}/{{nb}}', 0, 0, 'C')
+
+def generate_bom_pdf(prod_code, prod_name, cust_name, weight, df_materials, tot_mat_cost):
+    pdf = PDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    
+    # Title
+    pdf.set_font('Helvetica', 'B', 12)
+    pdf.cell(0, 8, f'BON DE CONSUM MATERIALE - {prod_code}', 0, 1, 'L')
+    pdf.ln(2)
+    
+    # Metadata Box
+    pdf.set_font('Helvetica', '', 10)
+    pdf.cell(40, 6, 'Denumire Produs:', 0, 0)
+    pdf.cell(100, 6, str(prod_name), 0, 1)
+    pdf.cell(40, 6, 'Client Asociat:', 0, 0)
+    pdf.cell(100, 6, str(cust_name), 0, 1)
+    pdf.cell(40, 6, 'Greutate Totala:', 0, 0)
+    pdf.cell(100, 6, f'{weight:.2f} kg', 0, 1)
+    pdf.ln(5)
+    
+    # Table Header
+    pdf.set_fill_color(230, 230, 230)
+    pdf.set_font('Helvetica', 'B', 9)
+    pdf.cell(25, 7, 'Cod', 1, 0, 'C', True)
+    pdf.cell(85, 7, 'Denumire Material', 1, 0, 'L', True)
+    pdf.cell(25, 7, 'Cantitate', 1, 0, 'C', True)
+    pdf.cell(25, 7, 'Pret Unit. (EUR)', 1, 0, 'R', True)
+    pdf.cell(30, 7, 'Total (EUR)', 1, 1, 'R', True)
+    
+    # Table Rows
+    pdf.set_font('Helvetica', '', 9)
+    for _, r in df_materials.iterrows():
+        code_str = str(r.get('Code', ''))[:12]
+        mat_name_str = str(r.get('Material Name', ''))[:45]
+        qty_str = f"{r.get('Qty', 0)} {r.get('UoM', '')}"
+        price_val = float(r.get('Price', 0))
+        tot_val = float(r.get('Total Cost', 0))
+        
+        pdf.cell(25, 6, code_str, 1, 0, 'C')
+        pdf.cell(85, 6, mat_name_str, 1, 0, 'L')
+        pdf.cell(25, 6, qty_str, 1, 0, 'C')
+        pdf.cell(25, 6, f'{price_val:.2f}', 1, 0, 'R')
+        pdf.cell(30, 6, f'{tot_val:.2f}', 1, 1, 'R')
+        
+    pdf.ln(3)
+    pdf.set_font('Helvetica', 'B', 10)
+    pdf.cell(160, 7, 'TOTAL COST MATERIALE:', 0, 0, 'R')
+    pdf.cell(30, 7, f'{tot_mat_cost:.2f} EUR', 1, 1, 'R')
+    
+    buf = io.BytesIO()
+    pdf.output(buf)
+    return buf.getvalue()
+
+def generate_routing_pdf(prod_code, prod_name, cust_name, df_ops, tot_lab_cost):
+    pdf = PDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    
+    # Title
+    pdf.set_font('Helvetica', 'B', 12)
+    pdf.cell(0, 8, f'FISA TEHNOLOGICA DE OPERATII (ROUTING) - {prod_code}', 0, 1, 'L')
+    pdf.ln(2)
+    
+    # Metadata Box
+    pdf.set_font('Helvetica', '', 10)
+    pdf.cell(40, 6, 'Denumire Produs:', 0, 0)
+    pdf.cell(100, 6, str(prod_name), 0, 1)
+    pdf.cell(40, 6, 'Client Asociat:', 0, 0)
+    pdf.cell(100, 6, str(cust_name), 0, 1)
+    pdf.ln(5)
+    
+    # Table Header
+    pdf.set_fill_color(230, 230, 230)
+    pdf.set_font('Helvetica', 'B', 9)
+    pdf.cell(15, 7, 'Pas', 1, 0, 'C', True)
+    pdf.cell(25, 7, 'Cod Op.', 1, 0, 'C', True)
+    pdf.cell(70, 7, 'Denumire Operatie', 1, 0, 'L', True)
+    pdf.cell(30, 7, 'Timp / Cant.', 1, 0, 'C', True)
+    pdf.cell(25, 7, 'Tarif (EUR)', 1, 0, 'R', True)
+    pdf.cell(25, 7, 'Total (EUR)', 1, 1, 'R', True)
+    
+    # Table Rows
+    pdf.set_font('Helvetica', '', 9)
+    for _, r in df_ops.iterrows():
+        step_str = f"Step {r.get('Step', 1)}"
+        code_str = str(r.get('Op Code', ''))[:12]
+        op_name_str = str(r.get('Operation Name', ''))[:38]
+        dur_str = f"{r.get('Duration', 0)} {r.get('Unit', '')}"
+        rate_val = float(r.get('Rate', 0))
+        tot_val = float(r.get('Total Cost', 0))
+        
+        pdf.cell(15, 6, step_str, 1, 0, 'C')
+        pdf.cell(25, 6, code_str, 1, 0, 'C')
+        pdf.cell(70, 6, op_name_str, 1, 0, 'L')
+        pdf.cell(30, 6, dur_str, 1, 0, 'C')
+        pdf.cell(25, 6, f'{rate_val:.2f}', 1, 0, 'R')
+        pdf.cell(25, 6, f'{tot_val:.2f}', 1, 1, 'R')
+        
+    pdf.ln(3)
+    pdf.set_font('Helvetica', 'B', 10)
+    pdf.cell(140, 7, 'TOTAL COST OPERATII / MANOPERA:', 0, 0, 'R')
+    pdf.cell(25, 7, f'{tot_lab_cost:.2f} EUR', 1, 1, 'R')
+    
+    buf = io.BytesIO()
+    pdf.output(buf)
+    return buf.getvalue()
 
 # --- ANAF API FUNCTION ---
 def fetch_anaf_data(cui):
@@ -621,7 +745,7 @@ def create_finished_product_dialog():
         else:
             st.warning("Te rugăm să introduci Part Description!")
 
-# DIALOG MODAL POP-UP FOR PRODUCT RECIPES (BOM & ROUTING) WITH FULL LINE EDITING & PERFECT ALIGNMENT
+# DIALOG MODAL POP-UP FOR PRODUCT RECIPES WITH PDF GENERATION & MARKUP
 @st.dialog("➕ Edit Product BOM Recipe & Routing", width="large")
 def manage_product_bom_dialog(selected_prod_id=None):
     st.session_state["keep_bom_dialog_open"] = False
@@ -648,21 +772,26 @@ def manage_product_bom_dialog(selected_prod_id=None):
     df_cust = pd.read_sql_query("SELECT id, name FROM customers ORDER BY name", conn_dialog)
     cust_dict = {r['name']: r['id'] for _, r in df_cust.iterrows()}
     
-    cursor.execute("SELECT customer_id FROM stock_items WHERE id = ?", (target_prod_id,))
-    row_c = cursor.fetchone()
-    curr_c_id = row_c[0] if row_c else None
+    cursor.execute("SELECT uniq_code, name, customer_id FROM stock_items WHERE id = ?", (target_prod_id,))
+    row_item = cursor.fetchone()
+    target_uniq_code = row_item[0] if row_item else ""
+    target_prod_name = row_item[1] if row_item else ""
+    curr_c_id = row_item[2] if row_item else None
+
     c_keys = ["General / Stock Product"] + list(cust_dict.keys())
     curr_c_name = [k for k, v in cust_dict.items() if v == curr_c_id]
     sel_cust_name = st.selectbox("Assigned Customer *", c_keys, index=c_keys.index(curr_c_name[0]) if curr_c_name else 0)
 
-    cursor.execute("SELECT id, total_material_cost, total_labor_cost, total_production_cost FROM product_boms WHERE product_item_id = ?", (target_prod_id,))
+    cursor.execute("SELECT id, total_material_cost, total_labor_cost, total_production_cost, markup_percent FROM product_boms WHERE product_item_id = ?", (target_prod_id,))
     bom_row = cursor.fetchone()
     if not bom_row:
         cursor.execute("INSERT INTO product_boms (product_item_id, customer_id) VALUES (?, ?)", (target_prod_id, cust_dict.get(sel_cust_name)))
         conn_dialog.commit()
         bom_id = cursor.lastrowid
+        curr_markup = 0.0
     else:
         bom_id = bom_row[0]
+        curr_markup = safe_float(bom_row[4])
 
     st.divider()
     
@@ -674,7 +803,6 @@ def manage_product_bom_dialog(selected_prod_id=None):
         mat_dict = {f"{r['uniq_code']} - {r['name']}": r['id'] for _, r in df_all_mat.iterrows()}
         mat_options_keys = list(mat_dict.keys())
 
-        # DISPLAY COMPLETED MATERIAL LINES AT THE TOP WITH PERFECT VERTICAL ALIGNMENT
         q_bm = """
             SELECT bm.id as ID, bm.material_item_id, si.uniq_code as 'Code', si.name as 'Material Name', bm.quantity_required as 'Qty', u.code as 'UoM', bm.unit_cost as 'Price', bm.total_cost as 'Total Cost'
             FROM bom_materials bm
@@ -718,7 +846,6 @@ def manage_product_bom_dialog(selected_prod_id=None):
                     st.rerun()
             st.divider()
 
-        # INPUT FORM AT THE BOTTOM
         mat_options = [""] + mat_options_keys
         ver_m = st.session_state["bom_select_version"]
         
@@ -749,7 +876,6 @@ def manage_product_bom_dialog(selected_prod_id=None):
         op_dict = {f"{r['uniq_code']} - {r['name']}": r['id'] for _, r in df_all_ops.iterrows()}
         op_options_keys = list(op_dict.keys())
         
-        # DISPLAY COMPLETED OPERATION LINES AT THE TOP WITH PERFECT ALIGNMENT
         q_bo = """
             SELECT bo.id as ID, bo.step_number as Step, bo.operation_id, o.uniq_code as 'Op Code', o.name as 'Operation Name', o.cost_unit as 'Unit', bo.duration_hours as 'Duration', bo.rate_applied as 'Rate', bo.total_cost as 'Total Cost'
             FROM bom_operations bo
@@ -812,7 +938,6 @@ def manage_product_bom_dialog(selected_prod_id=None):
                     st.rerun()
             st.divider()
 
-        # INPUT FORM AT THE BOTTOM
         op_options = [""] + op_options_keys
         ver_o = st.session_state["bom_select_version"]
         
@@ -861,22 +986,59 @@ def manage_product_bom_dialog(selected_prod_id=None):
     if missing_weights:
         st.warning(f"⚠️ Atenție: Componentele următoare NU au greutatea notată în stoc: **{', '.join(missing_weights)}**. Vă rugăm să le actualizați greutatea specifică în modulul Stock!")
 
-    st.markdown("##### 📊 BOM Summary & Automatic Calculations")
-    sc1, sc2, sc3, sc4 = st.columns(4)
-    sc1.metric("Total Material Cost", f"{tot_mat_cost:.2f} €")
-    sc2.metric("Total Operations Cost", f"{tot_lab_cost:.2f} €")
-    sc3.metric("TOTAL BOM COST", f"{tot_prod_cost:.2f} €")
-    sc4.metric("Calculated Weight", f"{calc_weight:.2f} kg")
+    st.markdown("##### 📊 BOM Summary & Automatic Price Calculations")
+    
+    # Markup & Selling Price Controls
+    m_col1, m_col2, m_col3, m_col4, m_col5 = st.columns(5)
+    m_col1.metric("Material Cost", f"{tot_mat_cost:.2f} €")
+    m_col2.metric("Operations Cost", f"{tot_lab_cost:.2f} €")
+    m_col3.metric("PRODUCTION COST", f"{tot_prod_cost:.2f} €")
+    
+    markup_val = m_col4.number_input("Markup / Profit Margin (%)", min_value=0.0, max_value=1000.0, value=curr_markup, step=5.0)
+    final_sell_price = float(tot_prod_cost * (1.0 + (markup_val / 100.0)))
+    
+    m_col5.metric("FINAL SELLING PRICE", f"{final_sell_price:.2f} €")
 
-    if st.button("💾 Save Product Recipe & Update Costs", type="primary", use_container_width=True):
+    st.divider()
+    
+    # PDF Exports & Save Bar
+    p_col1, p_col2, p_col3 = st.columns([3, 3, 4])
+    
+    # Generate PDFs
+    pdf_bom_bytes = generate_bom_pdf(target_uniq_code, target_prod_name, sel_cust_name, calc_weight, df_bm, tot_mat_cost) if len(df_bm) > 0 else None
+    pdf_rot_bytes = generate_routing_pdf(target_uniq_code, target_prod_name, sel_cust_name, df_bo, tot_lab_cost) if len(df_bo) > 0 else None
+
+    if pdf_bom_bytes:
+        p_col1.download_button(
+            label="📄 Export Bon de Consum (PDF)",
+            data=pdf_bom_bytes,
+            file_name=f"Bon_Consum_{target_uniq_code}.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
+    else:
+        p_col1.button("📄 Export Bon de Consum (PDF)", disabled=True, use_container_width=True)
+
+    if pdf_rot_bytes:
+        p_col2.download_button(
+            label="📄 Export Fisa Tehnologica (PDF)",
+            data=pdf_rot_bytes,
+            file_name=f"Fisa_Tehnologica_{target_uniq_code}.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
+    else:
+        p_col2.button("📄 Export Fisa Tehnologica (PDF)", disabled=True, use_container_width=True)
+
+    if p_col3.button("💾 Save Product Recipe & Update Costs", type="primary", use_container_width=True):
         c_id = cust_dict.get(sel_cust_name)
-        cursor.execute("UPDATE product_boms SET customer_id=?, total_material_cost=?, total_labor_cost=?, total_production_cost=?, calculated_weight=? WHERE id=?",
-                       (c_id, tot_mat_cost, tot_lab_cost, tot_prod_cost, calc_weight, bom_id))
-        cursor.execute("UPDATE stock_items SET customer_id=?, purchase_price=?, specific_weight=? WHERE id=?", (c_id, tot_prod_cost, calc_weight, target_prod_id))
+        cursor.execute("UPDATE product_boms SET customer_id=?, total_material_cost=?, total_labor_cost=?, total_production_cost=?, calculated_weight=?, markup_percent=? WHERE id=?",
+                       (c_id, tot_mat_cost, tot_lab_cost, tot_prod_cost, calc_weight, markup_val, bom_id))
+        cursor.execute("UPDATE stock_items SET customer_id=?, purchase_price=?, selling_price=?, specific_weight=? WHERE id=?", (c_id, tot_prod_cost, final_sell_price, calc_weight, target_prod_id))
         conn_dialog.commit()
         st.session_state["keep_bom_dialog_open"] = False
         st.session_state.pop("active_bom_dialog_prod_id", None)
-        st.success("BOM Recipe successfully saved!")
+        st.success("BOM Recipe & Final Prices successfully saved!")
         st.rerun()
 
 # DIALOG MODALS FOR PRODUCTION FACILITIES
