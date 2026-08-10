@@ -7,7 +7,7 @@ from datetime import datetime
 # 1. Page Configuration
 st.set_page_config(page_title="CAN Prod ERP Custom", layout="wide", initial_sidebar_state="collapsed")
 
-# 2. Database Initialization
+# 2. Database Initialization & Auto-Repair Schema
 def init_custom_db():
     conn = sqlite3.connect('can_prod_v2.db')
     cursor = conn.cursor()
@@ -44,7 +44,7 @@ def init_custom_db():
     );
     """)
 
-    # Stock Items Table (Extended with Sub-Groups & Specific Weight)
+    # Stock Items Table
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS stock_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,6 +66,21 @@ def init_custom_db():
         FOREIGN KEY (warehouse_id) REFERENCES warehouses(id)
     );
     """)
+
+    # AUTO-REPAIR: Add missing columns if database table existed prior to schema updates
+    cursor.execute("PRAGMA table_info(stock_items)")
+    existing_cols = [col[1] for col in cursor.fetchall()]
+    
+    missing_cols = {
+        'sub_group': "VARCHAR(100) DEFAULT 'General'",
+        'selling_price': "REAL DEFAULT 0.0",
+        'specific_weight': "REAL DEFAULT 0.0",
+        'weight_unit': "VARCHAR(20) DEFAULT 'kg'"
+    }
+    
+    for col_name, col_type in missing_cols.items():
+        if col_name not in existing_cols:
+            cursor.execute(f"ALTER TABLE stock_items ADD COLUMN {col_name} {col_type}")
 
     # Populate Default Units
     cursor.execute("SELECT COUNT(*) FROM units")
