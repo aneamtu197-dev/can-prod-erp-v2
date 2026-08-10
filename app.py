@@ -44,9 +44,10 @@ def bulk_delete_dialog(item_ids):
         st.success("Items deleted successfully!")
         st.rerun()
 
-# DIALOG MODAL POP-UP FOR ADDING
+# DIALOG MODAL POP-UP FOR ADDING STOCK ITEMS
 @st.dialog("➕ Add New Item to Stock")
 def add_new_item_dialog(default_type="Raw Material"):
+    conn_dialog = get_db()
     st.subheader("Step 1: Select Item Type & Category")
     
     types = ["Raw Material", "Buy Part", "Finished Good / Subassembly"]
@@ -55,15 +56,15 @@ def add_new_item_dialog(default_type="Raw Material"):
     
     if item_type == "Raw Material":
         sub_group = st.selectbox("Main Sub-Group *", ["Tabla", "Teava", "Europrofile", "Raw Materials Diverse"])
-        auto_uniq = generate_unique_item_code(conn, "RAW MATERIAL", sub_group)
+        auto_uniq = generate_unique_item_code(conn_dialog, "RAW MATERIAL", sub_group)
         category = "RAW MATERIAL"
     elif item_type == "Buy Part":
         sub_group = "Buy Parts"
-        auto_uniq = generate_unique_item_code(conn, "BUY PART")
+        auto_uniq = generate_unique_item_code(conn_dialog, "BUY PART")
         category = "BUY PART"
     else:
         sub_group = "Finished Goods"
-        auto_uniq = generate_unique_item_code(conn, "FINISHED GOOD")
+        auto_uniq = generate_unique_item_code(conn_dialog, "FINISHED GOOD")
         category = st.selectbox("Category *", ["FINISHED GOOD", "SUBASSEMBLY"])
 
     with st.form("add_item_dynamic_form"):
@@ -73,11 +74,11 @@ def add_new_item_dialog(default_type="Raw Material"):
             st.text_input("Uniq Code (Auto-Generated) *", value=auto_uniq, disabled=True)
             code = st.text_input("Part No. / Original Code *", value=auto_uniq)
             name = st.text_input("Part Description / Name *")
-            df_u_opts = pd.read_sql_query("SELECT id, code, name FROM units ORDER BY code", conn)
+            df_u_opts = pd.read_sql_query("SELECT id, code, name FROM units ORDER BY code", conn_dialog)
             u_dict = {f"{r['code']} ({r['name']})": r['id'] for _, r in df_u_opts.iterrows()}
             selected_u = st.selectbox("Unit of Measure (UoM) *", list(u_dict.keys()))
             if item_type != "Finished Good / Subassembly":
-                df_s_opts = pd.read_sql_query("SELECT id, name FROM suppliers ORDER BY name", conn)
+                df_s_opts = pd.read_sql_query("SELECT id, name FROM suppliers ORDER BY name", conn_dialog)
                 s_dict = {r['name']: r['id'] for _, r in df_s_opts.iterrows()}
                 selected_s = st.selectbox("Preferred Supplier", list(s_dict.keys()) if s_dict else ["No Supplier"])
             else:
@@ -90,7 +91,7 @@ def add_new_item_dialog(default_type="Raw Material"):
             with col_w1: spec_weight = st.number_input("Specific Weight / Unit", min_value=0.0)
             with col_w2: w_unit = st.selectbox("Weight Unit", ["kg", "lbs", "g"])
             
-            df_w_opts = pd.read_sql_query("SELECT id, name FROM warehouses ORDER BY name", conn)
+            df_w_opts = pd.read_sql_query("SELECT id, name FROM warehouses ORDER BY name", conn_dialog)
             w_dict = {r['name']: r['id'] for _, r in df_w_opts.iterrows()}
             selected_w = st.selectbox("Storage Warehouse Location", list(w_dict.keys()))
             stock_qty = st.number_input("Initial Stock Quantity", min_value=0.0)
@@ -98,15 +99,16 @@ def add_new_item_dialog(default_type="Raw Material"):
 
         if st.form_submit_button("💾 Save Item", type="primary", use_container_width=True):
             if auto_uniq and name:
-                conn.cursor().execute("""INSERT INTO stock_items (uniq_code, code, name, category, sub_group, supplier_id, unit_id, warehouse_id, purchase_price, selling_price, specific_weight, weight_unit, current_stock, min_stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", 
+                conn_dialog.cursor().execute("""INSERT INTO stock_items (uniq_code, code, name, category, sub_group, supplier_id, unit_id, warehouse_id, purchase_price, selling_price, specific_weight, weight_unit, current_stock, min_stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", 
                                       (auto_uniq, code, name, category, sub_group, s_dict.get(selected_s), u_dict.get(selected_u), w_dict.get(selected_w), price, selling_p, spec_weight, w_unit, stock_qty, min_stock_qty))
-                conn.commit()
+                conn_dialog.commit()
                 st.success("Item saved!"); st.rerun()
 
-# DIALOG MODAL POP-UP FOR EDITING
+# DIALOG MODAL POP-UP FOR EDITING STOCK ITEMS
 @st.dialog("✏️ Edit Item Details")
 def edit_item_dialog(item_id):
-    cursor = conn.cursor()
+    conn_dialog = get_db()
+    cursor = conn_dialog.cursor()
     cursor.execute("SELECT uniq_code, code, name, category, sub_group, supplier_id, unit_id, warehouse_id, purchase_price, selling_price, specific_weight, weight_unit, current_stock, min_stock FROM stock_items WHERE id = ?", (item_id,))
     row = cursor.fetchone()
     
@@ -119,12 +121,12 @@ def edit_item_dialog(item_id):
                 e_name = st.text_input("Part Description / Name *", value=row[2])
                 e_sub = st.selectbox("Sub-Group *", ["Tabla", "Teava", "Europrofile", "Raw Materials Diverse"]) if row[3] == "RAW MATERIAL" else row[4]
                 
-                df_u_opts = pd.read_sql_query("SELECT id, code, name FROM units ORDER BY code", conn)
+                df_u_opts = pd.read_sql_query("SELECT id, code, name FROM units ORDER BY code", conn_dialog)
                 u_dict = {f"{r['code']} ({r['name']})": r['id'] for _, r in df_u_opts.iterrows()}; u_keys = list(u_dict.keys())
                 u_index = [idx for idx, k in enumerate(u_keys) if u_dict[k] == row[6]]
                 selected_u = st.selectbox("Unit of Measure (UoM)", u_keys, index=u_index[0] if u_index else 0)
 
-                df_s_opts = pd.read_sql_query("SELECT id, name FROM suppliers ORDER BY name", conn)
+                df_s_opts = pd.read_sql_query("SELECT id, name FROM suppliers ORDER BY name", conn_dialog)
                 s_dict = {r['name']: r['id'] for _, r in df_s_opts.iterrows()}; s_keys = ["No Supplier"] + list(s_dict.keys())
                 s_curr = [k for k, v in s_dict.items() if v == row[5]]
                 selected_s = st.selectbox("Supplier", s_keys, index=s_keys.index(s_curr[0]) if s_curr else 0)
@@ -137,7 +139,7 @@ def edit_item_dialog(item_id):
                 with c_w1: e_sweight = st.number_input("Spec Weight/Unit", value=safe_float(row[10]))
                 with c_w2: e_wunit = st.selectbox("Unit", ["kg", "lbs", "g"], index=["kg", "lbs", "g"].index(row[11] if row[11] else "kg"))
 
-                df_w_opts = pd.read_sql_query("SELECT id, name FROM warehouses ORDER BY name", conn)
+                df_w_opts = pd.read_sql_query("SELECT id, name FROM warehouses ORDER BY name", conn_dialog)
                 w_dict = {r['name']: r['id'] for _, r in df_w_opts.iterrows()}; w_keys = list(w_dict.keys())
                 w_curr = [k for k, v in w_dict.items() if v == row[7]]
                 selected_w = st.selectbox("Warehouse", w_keys, index=w_keys.index(w_curr[0]) if w_curr else 0)
@@ -149,9 +151,71 @@ def edit_item_dialog(item_id):
             if c_save.form_submit_button("💾 Save Changes", type="primary", use_container_width=True):
                 cursor.execute("""UPDATE stock_items SET code=?, name=?, sub_group=?, supplier_id=?, unit_id=?, warehouse_id=?, purchase_price=?, selling_price=?, specific_weight=?, weight_unit=?, current_stock=?, min_stock=? WHERE id=?""", 
                                (e_code, e_name, e_sub, s_dict.get(selected_s), u_dict.get(selected_u), w_dict.get(selected_w), e_pprice, e_sprice, e_sweight, e_wunit, e_stock, e_minstock, item_id))
-                conn.commit(); st.success("Updated!"); st.rerun()
+                conn_dialog.commit(); st.success("Updated!"); st.rerun()
             if c_del.form_submit_button("🗑️ Delete", use_container_width=True):
-                cursor.execute("DELETE FROM stock_items WHERE id = ?", (item_id,)); conn.commit(); st.success("Deleted!"); st.rerun()
+                cursor.execute("DELETE FROM stock_items WHERE id = ?", (item_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
+
+# DIALOG MODAL POP-UP FOR ADDING SUPPLIER
+@st.dialog("➕ Add New Supplier")
+def add_supplier_dialog():
+    conn_dialog = get_db()
+    with st.form("add_supplier_form"):
+        st.subheader("Supplier Details")
+        col1, col2 = st.columns(2)
+        with col1:
+            s_code = st.text_input("Supplier Code *", placeholder="e.g. SUP003")
+            s_name = st.text_input("Supplier Name *")
+            s_type = st.selectbox("Type of Supplier *", ["Raw Material Supplier", "Buy Parts Supplier", "General / Both"])
+            s_lt = st.number_input("Lead Time (Days)", min_value=0, value=3)
+        with col2:
+            s_contact = st.text_input("Contact Person")
+            s_phone = st.text_input("Phone Number")
+            s_email = st.text_input("E-mail Address")
+
+        st.divider()
+        if st.form_submit_button("💾 Save Supplier", type="primary", use_container_width=True):
+            if s_code and s_name:
+                try:
+                    conn_dialog.cursor().execute("INSERT INTO suppliers (code, name, supplier_type, contact_person, phone, email, lead_time_days) VALUES (?, ?, ?, ?, ?, ?, ?)", 
+                                                (s_code.strip(), s_name.strip(), s_type, s_contact.strip(), s_phone.strip(), s_email.strip(), s_lt))
+                    conn_dialog.commit()
+                    st.success("Supplier saved successfully!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+            else:
+                st.warning("Please fill in Code and Name!")
+
+# DIALOG MODAL POP-UP FOR EDITING SUPPLIER
+@st.dialog("✏️ Edit Supplier Details")
+def edit_supplier_dialog(supp_id):
+    conn_dialog = get_db()
+    cursor = conn_dialog.cursor()
+    cursor.execute("SELECT code, name, supplier_type, contact_person, phone, email, lead_time_days FROM suppliers WHERE id = ?", (supp_id,))
+    row = cursor.fetchone()
+    
+    if row:
+        with st.form("edit_supplier_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                e_code = st.text_input("Supplier Code *", value=row[0])
+                e_name = st.text_input("Supplier Name *", value=row[1])
+                type_opts = ["Raw Material Supplier", "Buy Parts Supplier", "General / Both"]
+                e_type = st.selectbox("Type of Supplier *", type_opts, index=type_opts.index(row[2]) if row[2] in type_opts else 0)
+                e_lt = st.number_input("Lead Time (Days)", min_value=0, value=int(row[6]))
+            with col2:
+                e_contact = st.text_input("Contact Person", value=row[3] if row[3] else "")
+                e_phone = st.text_input("Phone Number", value=row[4] if row[4] else "")
+                e_email = st.text_input("E-mail Address", value=row[5] if row[5] else "")
+
+            c_save, c_del = st.columns([8, 2])
+            if c_save.form_submit_button("💾 Save Changes", type="primary", use_container_width=True):
+                cursor.execute("UPDATE suppliers SET code=?, name=?, supplier_type=?, contact_person=?, phone=?, email=?, lead_time_days=? WHERE id=?", 
+                               (e_code, e_name, e_type, e_contact, e_phone, e_email, e_lt, supp_id))
+                conn_dialog.commit(); st.success("Updated!"); st.rerun()
+            if c_del.form_submit_button("🗑️ Delete", use_container_width=True):
+                cursor.execute("DELETE FROM suppliers WHERE id = ?", (supp_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
+
 
 # ==========================================
 # PAGE ROUTING
@@ -204,18 +268,15 @@ elif active_page == "Stock":
         
         df_raw = pd.read_sql_query(q_raw, conn, params=params)
         sel = st.dataframe(df_raw, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_raw")
-        
         if sel and len(sel.selection.rows) > 0:
             selected_ids = [int(df_raw.iloc[i]['ID']) for i in sel.selection.rows]
             st.info(f"☑️ Selected {len(selected_ids)} item(s)")
             col_a1, col_a2, _ = st.columns([2, 2, 8])
             with col_a1:
                 if len(selected_ids) == 1:
-                    if st.button("✏️ Edit Selected", use_container_width=True):
-                        edit_item_dialog(selected_ids[0])
+                    if st.button("✏️ Edit Selected", use_container_width=True): edit_item_dialog(selected_ids[0])
             with col_a2:
-                if st.button("🗑️ Delete Selected", use_container_width=True):
-                    bulk_delete_dialog(selected_ids)
+                if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_dialog(selected_ids)
 
     # --- TAB 2: BUY PARTS ---
     elif active_subtab == "Buy_Parts":
@@ -239,44 +300,71 @@ elif active_page == "Stock":
         
         df_buy = pd.read_sql_query(q_buy, conn, params=params)
         sel = st.dataframe(df_buy, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_buy")
-        
         if sel and len(sel.selection.rows) > 0:
             selected_ids = [int(df_buy.iloc[i]['ID']) for i in sel.selection.rows]
             st.info(f"☑️ Selected {len(selected_ids)} item(s)")
             col_a1, col_a2, _ = st.columns([2, 2, 8])
             with col_a1:
                 if len(selected_ids) == 1:
-                    if st.button("✏️ Edit Selected", use_container_width=True):
-                        edit_item_dialog(selected_ids[0])
+                    if st.button("✏️ Edit Selected", use_container_width=True): edit_item_dialog(selected_ids[0])
             with col_a2:
-                if st.button("🗑️ Delete Selected", use_container_width=True):
-                    bulk_delete_dialog(selected_ids)
+                if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_dialog(selected_ids)
 
     # --- TAB 3: FINISHED GOODS ---
     elif active_subtab == "Finished_Goods":
         st.markdown("##### Finished Goods & Subassemblies")
         if st.button("➕ Add Item", type="primary"): add_new_item_dialog("Finished Good / Subassembly")
         st.write("")
-        df_fin = pd.read_sql_query("SELECT si.id as ID, si.uniq_code as 'Uniq Code', si.name as 'Description', si.category as 'Category', u.code as 'UoM', si.selling_price as 'Selling Price (€)' FROM stock_items si LEFT JOIN units u ON si.unit_id = u.id WHERE si.category IN ('FINISHED GOOD', 'SUBASSEMBLY')", conn)
+
+        st.markdown('<div class="filter-panel">', unsafe_allow_html=True)
+        col_fg1, col_fg2, col_fg3, col_fg4 = st.columns([3, 4, 3, 2])
+        f_fg_code = col_fg1.text_input("Product Code", key="f_fg_code")
+        f_fg_name = col_fg2.text_input("Description", key="f_fg_name")
+        f_fg_cat = col_fg3.selectbox("Category", ["All Categories", "FINISHED GOOD", "SUBASSEMBLY"], key="f_fg_cat")
+        col_fg4.write(""); col_fg4.write(""); col_fg4.button("🔄 Reset", use_container_width=True, on_click=reset_fg_filters_callback)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        q_fin = "SELECT si.id as ID, si.uniq_code as 'Uniq Code', si.name as 'Description', si.category as 'Category', u.code as 'UoM', si.selling_price as 'Selling Price (€)' FROM stock_items si LEFT JOIN units u ON si.unit_id = u.id WHERE si.category IN ('FINISHED GOOD', 'SUBASSEMBLY')"
+        params = []
+        if f_fg_code: q_fin += " AND (si.code LIKE ? OR si.uniq_code LIKE ?)"; params.extend([f"%{f_fg_code}%", f"%{f_fg_code}%"])
+        if f_fg_name: q_fin += " AND si.name LIKE ?"; params.append(f"%{f_fg_name}%")
+        if f_fg_cat != "All Categories": q_fin += " AND si.category = ?"; params.append(f_fg_cat)
+
+        df_fin = pd.read_sql_query(q_fin, conn, params=params)
         sel = st.dataframe(df_fin, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_fin")
-        
         if sel and len(sel.selection.rows) > 0:
             selected_ids = [int(df_fin.iloc[i]['ID']) for i in sel.selection.rows]
             st.info(f"☑️ Selected {len(selected_ids)} item(s)")
             col_a1, col_a2, _ = st.columns([2, 2, 8])
             with col_a1:
                 if len(selected_ids) == 1:
-                    if st.button("✏️ Edit Selected", use_container_width=True):
-                        edit_item_dialog(selected_ids[0])
+                    if st.button("✏️ Edit Selected", use_container_width=True): edit_item_dialog(selected_ids[0])
             with col_a2:
-                if st.button("🗑️ Delete Selected", use_container_width=True):
-                    bulk_delete_dialog(selected_ids)
+                if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_dialog(selected_ids)
 
-    # --- OTHER TABS ---
+    # --- TAB 4: SUPPLIERS ---
     elif active_subtab == "Suppliers":
-        st.markdown("##### Suppliers"); df_s = pd.read_sql_query("SELECT * FROM suppliers", conn); st.dataframe(df_s, hide_index=True)
+        c_head, c_btn = st.columns([8, 2])
+        with c_head:
+            st.markdown("##### Supplier Management")
+        with c_btn:
+            if st.button("➕ Add Supplier", type="primary", use_container_width=True): add_supplier_dialog()
+        
+        st.write("")
+        df_s = pd.read_sql_query("SELECT id as ID, code as Code, name as 'Supplier Name', supplier_type as 'Supplier Type', contact_person as 'Contact Person', phone as Phone, email as Email, lead_time_days as 'Lead Time (Days)' FROM suppliers ORDER BY name", conn)
+        
+        st.caption("💡 Click on any row below to edit the supplier details.")
+        sel_supp = st.dataframe(df_s, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="t_supp", column_config={"ID": None})
+        
+        if sel_supp and len(sel_supp.selection.rows) > 0:
+            selected_idx = sel_supp.selection.rows[0]
+            target_id = int(df_s.iloc[selected_idx]['ID'])
+            edit_supplier_dialog(target_id)
+
+    # --- TAB 5: WAREHOUSES ---
     elif active_subtab == "Warehouses":
         st.markdown("##### Warehouses"); df_w = pd.read_sql_query("SELECT * FROM warehouses", conn); st.dataframe(df_w, hide_index=True)
+    # --- TAB 6: UNITS ---
     elif active_subtab == "Units":
         st.markdown("##### Units"); df_u = pd.read_sql_query("SELECT * FROM units", conn); st.dataframe(df_u, hide_index=True)
 
