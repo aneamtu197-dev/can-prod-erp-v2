@@ -4,7 +4,8 @@ import requests
 from datetime import datetime
 from db import (
     init_custom_db, get_db, generate_unique_item_code, generate_unique_customer_code, 
-    generate_unique_operation_code, import_mrpeasy_items, import_mrpeasy_customers, safe_float
+    generate_unique_facility_code, generate_unique_operation_code, import_mrpeasy_items, 
+    import_mrpeasy_customers, safe_float
 )
 from ui import load_css, render_top_header, render_nav_bar
 
@@ -427,11 +428,13 @@ def edit_customer_dialog(cust_id):
 @st.dialog("➕ Add Production Facility / Equipment")
 def add_facility_dialog():
     conn_dialog = get_db()
+    auto_fac_code = generate_unique_facility_code(conn_dialog)
+    
     with st.form("add_facility_form"):
         st.subheader("Facility / Equipment Details")
         col1, col2 = st.columns(2)
         with col1:
-            f_code = st.text_input("Facility Code *", placeholder="e.g. EQ-003")
+            st.text_input("Facility Code (Auto-Generated) *", value=auto_fac_code, disabled=True)
             f_name = st.text_input("Facility / Machine Name *", placeholder="e.g. Abkant Bystronic 150T")
             f_type = st.selectbox("Category / Type *", ["Laser Cutting", "Press Brake / Abkant", "Welding Station", "Powder Coating / Vopsitorie", "CNC Machining", "General Machine", "Manual Workstation"])
         with col2:
@@ -441,17 +444,17 @@ def add_facility_dialog():
 
         st.divider()
         if st.form_submit_button("💾 Save Facility", type="primary", use_container_width=True):
-            if f_code and f_name:
+            if f_name.strip():
                 cursor = conn_dialog.cursor()
-                cursor.execute("SELECT id FROM production_facilities WHERE code = ? OR name = ?", (f_code.strip(), f_name.strip()))
+                cursor.execute("SELECT id FROM production_facilities WHERE name = ?", (f_name.strip(),))
                 if cursor.fetchone():
-                    st.warning(f"⚠️ A facility with code '{f_code.strip()}' or name '{f_name.strip()}' already exists!")
+                    st.warning(f"⚠️ A facility with name '{f_name.strip()}' already exists!")
                 else:
                     cursor.execute("INSERT INTO production_facilities (code, name, facility_type, brand_model, status, next_maintenance_date) VALUES (?, ?, ?, ?, ?, ?)",
-                                   (f_code.strip(), f_name.strip(), f_type, f_brand.strip(), f_status, str(f_date)))
+                                   (auto_fac_code, f_name.strip(), f_type, f_brand.strip(), f_status, str(f_date)))
                     conn_dialog.commit(); st.success("Facility saved!"); st.rerun()
             else:
-                st.warning("Please fill in Facility Code and Name!")
+                st.warning("Please fill in Facility / Machine Name!")
 
 @st.dialog("✏️ Edit Facility Details")
 def edit_facility_dialog(fac_id):
@@ -463,7 +466,7 @@ def edit_facility_dialog(fac_id):
         with st.form("edit_facility_form"):
             col1, col2 = st.columns(2)
             with col1:
-                e_code = st.text_input("Facility Code *", value=row[0])
+                st.text_input("Facility Code (Read-Only) *", value=row[0], disabled=True)
                 e_name = st.text_input("Facility / Machine Name *", value=row[1])
                 types_opts = ["Laser Cutting", "Press Brake / Abkant", "Welding Station", "Powder Coating / Vopsitorie", "CNC Machining", "General Machine", "Manual Workstation"]
                 e_type = st.selectbox("Category / Type *", types_opts, index=types_opts.index(row[2]) if row[2] in types_opts else 0)
@@ -474,8 +477,8 @@ def edit_facility_dialog(fac_id):
 
             c_save, c_del = st.columns([8, 2])
             if c_save.form_submit_button("💾 Save Changes", type="primary", use_container_width=True):
-                cursor.execute("UPDATE production_facilities SET code=?, name=?, facility_type=?, brand_model=?, status=? WHERE id=?", 
-                               (e_code.strip(), e_name.strip(), e_type, e_brand.strip(), e_status, fac_id))
+                cursor.execute("UPDATE production_facilities SET name=?, facility_type=?, brand_model=?, status=? WHERE id=?", 
+                               (e_name.strip(), e_type, e_brand.strip(), e_status, fac_id))
                 conn_dialog.commit(); st.success("Updated!"); st.rerun()
             if c_del.form_submit_button("🗑️ Delete", use_container_width=True):
                 cursor.execute("DELETE FROM production_facilities WHERE id = ?", (fac_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
