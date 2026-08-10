@@ -616,7 +616,7 @@ elif active_page == "Stock":
         sel = st.dataframe(df_raw, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_raw")
         
         if sel and len(sel.selection.rows) > 0:
-            selected_ids = [int(df_raw.iloc[i]['ID']) for i in sel.selection.rows]
+            selected_ids = [int(df_raw.iloc[i]['ID']) for i in sel.selection.rows if i < len(df_raw)]
             st.info(f"☑️ Selected {len(selected_ids)} item(s)")
             col_a1, col_a2, _ = st.columns([2, 2, 8])
             with col_a1:
@@ -648,7 +648,7 @@ elif active_page == "Stock":
         sel = st.dataframe(df_buy, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_buy")
         
         if sel and len(sel.selection.rows) > 0:
-            selected_ids = [int(df_buy.iloc[i]['ID']) for i in sel.selection.rows]
+            selected_ids = [int(df_buy.iloc[i]['ID']) for i in sel.selection.rows if i < len(df_buy)]
             st.info(f"☑️ Selected {len(selected_ids)} item(s)")
             col_a1, col_a2, _ = st.columns([2, 2, 8])
             with col_a1:
@@ -680,7 +680,7 @@ elif active_page == "Stock":
         sel = st.dataframe(df_fin, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_fin")
         
         if sel and len(sel.selection.rows) > 0:
-            selected_ids = [int(df_fin.iloc[i]['ID']) for i in sel.selection.rows]
+            selected_ids = [int(df_fin.iloc[i]['ID']) for i in sel.selection.rows if i < len(df_fin)]
             st.info(f"☑️ Selected {len(selected_ids)} item(s)")
             col_a1, col_a2, _ = st.columns([2, 2, 8])
             with col_a1:
@@ -700,7 +700,7 @@ elif active_page == "Stock":
         sel_supp = st.dataframe(df_s, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_supp", column_config={"ID": None})
         
         if sel_supp and len(sel_supp.selection.rows) > 0:
-            selected_ids = [int(df_s.iloc[i]['ID']) for i in sel_supp.selection.rows]
+            selected_ids = [int(df_s.iloc[i]['ID']) for i in sel_supp.selection.rows if i < len(df_s)]
             st.info(f"☑️ Selected {len(selected_ids)} supplier(s)")
             col_a1, col_a2, _ = st.columns([2, 2, 8])
             with col_a1:
@@ -759,7 +759,7 @@ elif active_page == "BOM":
         )
         
         if sel_op and len(sel_op.selection.rows) > 0:
-            selected_ids = [int(df_op.iloc[i]['ID']) for i in sel_op.selection.rows]
+            selected_ids = [int(df_op.iloc[i]['ID']) for i in sel_op.selection.rows if i < len(df_op)]
             st.info(f"☑️ Selected {len(selected_ids)} operation(s)")
             col_a1, col_a2, _ = st.columns([2, 2, 8])
             with col_a1:
@@ -780,7 +780,7 @@ elif active_page == "BOM":
         sel_fac = st.dataframe(df_fac, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_fac", column_config={"ID": None})
         
         if sel_fac and len(sel_fac.selection.rows) > 0:
-            selected_ids = [int(df_fac.iloc[i]['ID']) for i in sel_fac.selection.rows]
+            selected_ids = [int(df_fac.iloc[i]['ID']) for i in sel_fac.selection.rows if i < len(df_fac)]
             st.info(f"☑️ Selected {len(selected_ids)} facility(ies)")
             col_a1, col_a2, _ = st.columns([2, 2, 8])
             with col_a1:
@@ -824,7 +824,7 @@ elif active_page == "RFQ":
         sel_cust = st.dataframe(df_c, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_cust", column_config={"ID": None})
         
         if sel_cust and len(sel_cust.selection.rows) > 0:
-            selected_ids = [int(df_c.iloc[i]['ID']) for i in sel_cust.selection.rows]
+            selected_ids = [int(df_c.iloc[i]['ID']) for i in sel_cust.selection.rows if i < len(df_c)]
             st.info(f"☑️ Selected {len(selected_ids)} customer(s)")
             col_a1, col_a2, _ = st.columns([2, 2, 8])
             with col_a1:
