@@ -1,7 +1,9 @@
 import streamlit as st
 import pandas as pd
+import requests
 from db import init_custom_db, get_db, generate_unique_item_code, import_mrpeasy_items, safe_float
 from ui import load_css, render_top_header, render_nav_bar
+from datetime import datetime
 
 st.set_page_config(page_title="CAN Prod ERP Custom", layout="wide", initial_sidebar_state="collapsed")
 
@@ -19,6 +21,31 @@ render_nav_bar(active_page)
 
 conn = get_db()
 
+# --- ANAF API FUNCTION ---
+def fetch_anaf_data(cui):
+    try:
+        clean_cui = ''.join(filter(str.isdigit, str(cui)))
+        if not clean_cui: return None
+        
+        today = datetime.now().strftime("%Y-%m-%d")
+        url = "https://webservicesp.anaf.ro/PlatitorTvaRest/api/v8/ws/tva"
+        payload = [{"cui": int(clean_cui), "data": today}]
+        headers = {"Content-Type": "application/json"}
+        
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('found') and len(data.get('found')) > 0:
+                company = data['found'][0]
+                return {
+                    'name': company.get('denumire', ''),
+                    'address': company.get('adresa', ''),
+                    'reg_com': company.get('nrRegCom', '')
+                }
+    except Exception as e:
+        return None
+    return None
+
 # Callback Functions for Filters
 def reset_raw_filters_callback():
     for k in ["f_raw_code", "f_raw_name", "f_raw_sub", "f_raw_supp", "f_raw_uom"]: st.session_state[k] = "All Sub-Groups" if "sub" in k else ("All Suppliers" if "supp" in k else ("All UoMs" if "uom" in k else ""))
@@ -34,30 +61,26 @@ def reset_fg_filters_callback():
 def bulk_delete_stock_dialog(item_ids):
     st.error(f"Are you sure you want to delete {len(item_ids)} item(s)? This action cannot be undone.")
     c1, c2 = st.columns(2)
-    if c1.button("Cancel", use_container_width=True):
-        st.rerun()
+    if c1.button("Cancel", use_container_width=True): st.rerun()
     if c2.button("Yes, Delete All", type="primary", use_container_width=True):
         cursor = conn.cursor()
         placeholders = ",".join(["?"] * len(item_ids))
         cursor.execute(f"DELETE FROM stock_items WHERE id IN ({placeholders})", item_ids)
         conn.commit()
-        st.success("Items deleted successfully!")
-        st.rerun()
+        st.success("Items deleted successfully!"); st.rerun()
 
 # DIALOG MODAL FOR BULK DELETE SUPPLIERS
 @st.dialog("⚠️ Confirm Bulk Delete")
 def bulk_delete_suppliers_dialog(item_ids):
     st.error(f"Are you sure you want to delete {len(item_ids)} supplier(s)? This action cannot be undone.")
     c1, c2 = st.columns(2)
-    if c1.button("Cancel", use_container_width=True):
-        st.rerun()
+    if c1.button("Cancel", use_container_width=True): st.rerun()
     if c2.button("Yes, Delete All", type="primary", use_container_width=True):
         cursor = conn.cursor()
         placeholders = ",".join(["?"] * len(item_ids))
         cursor.execute(f"DELETE FROM suppliers WHERE id IN ({placeholders})", item_ids)
         conn.commit()
-        st.success("Suppliers deleted successfully!")
-        st.rerun()
+        st.success("Suppliers deleted successfully!"); st.rerun()
 
 # DIALOG MODAL POP-UP FOR ADDING STOCK ITEMS
 @st.dialog("➕ Add New Item to Stock")
@@ -170,31 +193,70 @@ def edit_item_dialog(item_id):
             if c_del.form_submit_button("🗑️ Delete", use_container_width=True):
                 cursor.execute("DELETE FROM stock_items WHERE id = ?", (item_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
 
-# DIALOG MODAL POP-UP FOR ADDING SUPPLIER
+# DIALOG MODAL POP-UP FOR ADDING SUPPLIER WITH ANAF
 @st.dialog("➕ Add New Supplier")
 def add_supplier_dialog():
     conn_dialog = get_db()
+    
+    st.subheader("🔍 Auto-Complete via ANAF API")
+    st.caption("Enter the supplier's CUI to automatically fetch official data.")
+    col_anaf1, col_anaf2 = st.columns([3, 1])
+    with col_anaf1:
+        search_cui = st.text_input("Enter CUI (RO...)", key="search_cui_input")
+    with col_anaf2:
+        st.write(""); st.write("")
+        if st.button("Search ANAF", use_container_width=True):
+            if search_cui:
+                data = fetch_anaf_data(search_cui)
+                if data:
+                    st.session_state['anaf_name'] = data['name']
+                    st.session_state['anaf_address'] = data['address']
+                    st.session_state['anaf_reg'] = data['reg_com']
+                    st.session_state['anaf_cui'] = search_cui
+                    st.success("Data fetched successfully!")
+                    st.rerun()
+                else:
+                    st.error("Company not found or ANAF API error.")
+    
+    st.divider()
+    
     with st.form("add_supplier_form"):
         st.subheader("Supplier Details")
         col1, col2 = st.columns(2)
+        
+        def_cui = st.session_state.get('anaf_cui', '')
+        def_name = st.session_state.get('anaf_name', '')
+        def_address = st.session_state.get('anaf_address', '')
+        def_reg = st.session_state.get('anaf_reg', '')
+
         with col1:
-            s_code = st.text_input("Supplier Code *", placeholder="e.g. SUP003")
-            s_name = st.text_input("Supplier Name *")
+            s_code = st.text_input("Supplier Internal Code *", placeholder="e.g. SUP003")
+            s_cui = st.text_input("CUI / Tax ID *", value=def_cui)
+            s_name = st.text_input("Supplier Name *", value=def_name)
+            s_reg = st.text_input("Reg. Com. (J.../...)", value=def_reg)
             s_type = st.selectbox("Type of Supplier *", ["Raw Material Supplier", "Buy Parts Supplier", "General / Both"])
-            s_lt = st.number_input("Lead Time (Days)", min_value=0, value=3)
+            s_address = st.text_area("Address", value=def_address, height=105)
         with col2:
             s_contact = st.text_input("Contact Person")
             s_phone = st.text_input("Phone Number")
             s_email = st.text_input("E-mail Address")
+            s_lt = st.number_input("Lead Time (Days)", min_value=0, value=3)
+            st.markdown("##### Banking Details")
+            s_iban = st.text_input("IBAN")
+            s_bank = st.text_input("Bank Name")
 
         st.divider()
         if st.form_submit_button("💾 Save Supplier", type="primary", use_container_width=True):
             if s_code and s_name:
                 try:
-                    conn_dialog.cursor().execute("INSERT INTO suppliers (code, name, supplier_type, contact_person, phone, email, lead_time_days) VALUES (?, ?, ?, ?, ?, ?, ?)", 
-                                                (s_code.strip(), s_name.strip(), s_type, s_contact.strip(), s_phone.strip(), s_email.strip(), s_lt))
+                    conn_dialog.cursor().execute(
+                        "INSERT INTO suppliers (code, name, supplier_type, contact_person, phone, email, lead_time_days, cui, reg_com, address, iban, bank_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", 
+                        (s_code.strip(), s_name.strip(), s_type, s_contact.strip(), s_phone.strip(), s_email.strip(), s_lt, s_cui.strip(), s_reg.strip(), s_address.strip(), s_iban.strip(), s_bank.strip())
+                    )
                     conn_dialog.commit()
                     st.success("Supplier saved successfully!")
+                    for k in ['anaf_cui', 'anaf_name', 'anaf_address', 'anaf_reg']:
+                        if k in st.session_state: del st.session_state[k]
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error: {e}")
@@ -206,27 +268,33 @@ def add_supplier_dialog():
 def edit_supplier_dialog(supp_id):
     conn_dialog = get_db()
     cursor = conn_dialog.cursor()
-    cursor.execute("SELECT code, name, supplier_type, contact_person, phone, email, lead_time_days FROM suppliers WHERE id = ?", (supp_id,))
+    cursor.execute("SELECT code, name, supplier_type, contact_person, phone, email, lead_time_days, cui, reg_com, address, iban, bank_name FROM suppliers WHERE id = ?", (supp_id,))
     row = cursor.fetchone()
     
     if row:
         with st.form("edit_supplier_form"):
             col1, col2 = st.columns(2)
             with col1:
-                e_code = st.text_input("Supplier Code *", value=row[0])
+                e_code = st.text_input("Supplier Internal Code *", value=row[0])
+                e_cui = st.text_input("CUI / Tax ID", value=row[7] if row[7] else "")
                 e_name = st.text_input("Supplier Name *", value=row[1])
+                e_reg = st.text_input("Reg. Com.", value=row[8] if row[8] else "")
                 type_opts = ["Raw Material Supplier", "Buy Parts Supplier", "General / Both"]
                 e_type = st.selectbox("Type of Supplier *", type_opts, index=type_opts.index(row[2]) if row[2] in type_opts else 0)
-                e_lt = st.number_input("Lead Time (Days)", min_value=0, value=int(row[6]))
+                e_address = st.text_area("Address", value=row[9] if row[9] else "", height=105)
             with col2:
                 e_contact = st.text_input("Contact Person", value=row[3] if row[3] else "")
                 e_phone = st.text_input("Phone Number", value=row[4] if row[4] else "")
                 e_email = st.text_input("E-mail Address", value=row[5] if row[5] else "")
+                e_lt = st.number_input("Lead Time (Days)", min_value=0, value=int(row[6]))
+                st.markdown("##### Banking Details")
+                e_iban = st.text_input("IBAN", value=row[10] if row[10] else "")
+                e_bank = st.text_input("Bank Name", value=row[11] if row[11] else "")
 
             c_save, c_del = st.columns([8, 2])
             if c_save.form_submit_button("💾 Save Changes", type="primary", use_container_width=True):
-                cursor.execute("UPDATE suppliers SET code=?, name=?, supplier_type=?, contact_person=?, phone=?, email=?, lead_time_days=? WHERE id=?", 
-                               (e_code, e_name, e_type, e_contact, e_phone, e_email, e_lt, supp_id))
+                cursor.execute("UPDATE suppliers SET code=?, name=?, supplier_type=?, contact_person=?, phone=?, email=?, lead_time_days=?, cui=?, reg_com=?, address=?, iban=?, bank_name=? WHERE id=?", 
+                               (e_code, e_name, e_type, e_contact, e_phone, e_email, e_lt, e_cui, e_reg, e_address, e_iban, e_bank, supp_id))
                 conn_dialog.commit(); st.success("Updated!"); st.rerun()
             if c_del.form_submit_button("🗑️ Delete", use_container_width=True):
                 cursor.execute("DELETE FROM suppliers WHERE id = ?", (supp_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
@@ -369,7 +437,7 @@ elif active_page == "Stock":
             if st.button("➕ Add Supplier", type="primary", use_container_width=True): add_supplier_dialog()
         
         st.write("")
-        df_s = pd.read_sql_query("SELECT id as ID, code as Code, name as 'Supplier Name', supplier_type as 'Supplier Type', contact_person as 'Contact Person', phone as Phone, email as Email, lead_time_days as 'Lead Time (Days)' FROM suppliers ORDER BY name", conn)
+        df_s = pd.read_sql_query("SELECT id as ID, code as Code, cui as 'CUI', name as 'Supplier Name', supplier_type as 'Supplier Type', contact_person as 'Contact Person', phone as Phone, email as Email, lead_time_days as 'Lead Time (Days)' FROM suppliers ORDER BY name", conn)
         
         sel_supp = st.dataframe(df_s, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_supp", column_config={"ID": None})
         
