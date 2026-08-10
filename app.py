@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 from datetime import datetime
-from db import init_custom_db, get_db, generate_unique_item_code, import_mrpeasy_items, safe_float
+from db import init_custom_db, get_db, generate_unique_item_code, import_mrpeasy_items, import_mrpeasy_customers, safe_float
 from ui import load_css, render_top_header, render_nav_bar
 
 st.set_page_config(page_title="CAN Prod ERP Custom", layout="wide", initial_sidebar_state="collapsed")
@@ -46,7 +46,7 @@ def fetch_anaf_data(cui):
                 else:
                     return None, "CUI-ul nu a fost găsit în baza de date ANAF."
             elif response.status_code in [403, 404]:
-                continue # Incearca versiunea urmatoare
+                continue
         return None, "🚨 ANAF blochează cererile de pe serverele Streamlit Cloud. Te rugăm să introduci datele manual."
     except Exception as e:
         return None, "🚨 Eroare conexiune ANAF. Te rugăm să introduci datele manual."
@@ -525,10 +525,16 @@ elif active_page == "RFQ":
     
     # --- CUSTOMERS TAB ---
     if active_subtab_rfq == "Customers":
-        c_head, c_btn = st.columns([8, 2])
+        c_head, c_btn1, c_btn2 = st.columns([6, 2, 2])
         with c_head: st.markdown("##### Customer Database")
-        with c_btn:
+        with c_btn1:
             if st.button("➕ Add Customer", type="primary", use_container_width=True): add_customer_dialog()
+        with c_btn2:
+            with st.popover("↑ Import CSV", use_container_width=True):
+                csv_file = st.file_uploader("Upload Customers CSV", type=['csv'], key="upload_cust_csv")
+                if csv_file and st.button("Execute Import", key="exec_cust_imp"):
+                    ins, upd = import_mrpeasy_customers(pd.read_csv(csv_file))
+                    st.success(f"Added: {ins}, Updated: {upd}"); st.rerun()
             
         st.write("")
         df_c = pd.read_sql_query("SELECT id as ID, code as Code, cui as 'CUI', name as 'Customer Name', reg_com as 'Reg. Com.', contact_person as 'Contact Person', phone as Phone, email as Email FROM customers ORDER BY name", conn)
