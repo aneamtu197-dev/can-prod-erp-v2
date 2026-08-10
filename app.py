@@ -4,14 +4,13 @@ import pandas as pd
 from datetime import datetime
 
 # 1. Configurare Pagină
-st.set_page_config(page_title="CAN Prod ERP Custom", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="CAN Prod ERP Custom", layout="wide", initial_sidebar_state="collapsed")
 
-# 2. Inițializare Bază de Date Nouă
+# 2. Inițializare Bază de Date Custom
 def init_custom_db():
     conn = sqlite3.connect('can_prod_v2.db')
     cursor = conn.cursor()
     
-    # Suppliers
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS suppliers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -24,7 +23,6 @@ def init_custom_db():
     );
     """)
 
-    # Units
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS units (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -33,7 +31,6 @@ def init_custom_db():
     );
     """)
 
-    # Warehouses
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS warehouses (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,7 +40,6 @@ def init_custom_db():
     );
     """)
 
-    # Stock Items
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS stock_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -86,139 +82,187 @@ init_custom_db()
 def get_db():
     return sqlite3.connect('can_prod_v2.db')
 
-# 3. SELECTOR DINAMIC DE INTERFAȚĂ & CROMATICA AQUA
-st.sidebar.markdown("### 🎨 Personalizare Interfață")
-ui_style = st.sidebar.selectbox("Alege Stilul Vizual (Aqua Themes)", [
-    "1. Aqua Glass Modern (Recomandat)",
-    "2. Minimalist Clean Aqua",
-    "3. Industrial Aqua & Dark Slate"
-])
+# 3. Preluare Pagină curentă din Query Parameters (Pentru navigare instantă fără reîncărcare grea)
+query_params = st.query_params
+active_page = query_params.get("page", "Home")
+active_subtab = query_params.get("subtab", "Items")
 
-# STILURI CSS APLICATE DINAMIC
-if "1." in ui_style: # Aqua Glass Modern
-    css_theme = """
-    <style>
-        .stApp { background-color: #f0f9ff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-        .main-card-header {
-            background: linear-gradient(135deg, #0284c7 0%, #06b6d4 100%);
-            color: #ffffff; padding: 18px 25px; border-radius: 12px;
-            box-shadow: 0 4px 15px rgba(14, 165, 233, 0.2); margin-bottom: 25px;
-        }
-        .metric-box {
-            background: #ffffff; border-radius: 10px; padding: 15px;
-            border-left: 4px solid #0ea5e9; box-shadow: 0 2px 8px rgba(0,0,0,0.04);
-        }
-        .stTabs [data-baseweb="tab-list"] { gap: 8px; }
-        .stTabs [data-baseweb="tab"] {
-            padding: 10px 20px; border-radius: 8px; background-color: #e0f2fe; color: #0369a1; font-weight: 600;
-        }
-        .stTabs [aria-selected="true"] { background-color: #0284c7 !important; color: white !important; }
-    </style>
-    """
-elif "2." in ui_style: # Minimalist Clean Aqua
-    css_theme = """
-    <style>
-        .stApp { background-color: #ffffff; }
-        .main-card-header {
-            background-color: #f0f9ff; border: 1px solid #bae6fd; color: #0369a1;
-            padding: 15px 20px; border-radius: 8px; margin-bottom: 20px;
-        }
-        .metric-box {
-            background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px;
-        }
-        .stTabs [data-baseweb="tab"] {
-            padding: 8px 16px; border-radius: 4px; background-color: #f1f5f9; color: #475569; font-weight: 600;
-        }
-        .stTabs [aria-selected="true"] { background-color: #0ea5e9 !important; color: white !important; }
-    </style>
-    """
-else: # Industrial Aqua & Dark Slate
-    css_theme = """
-    <style>
-        .stApp { background-color: #f8fafc; }
-        .main-card-header {
-            background-color: #0f172a; color: #38bdf8;
-            padding: 18px 25px; border-radius: 8px; border-left: 6px solid #06b6d4; margin-bottom: 25px;
-        }
-        .metric-box {
-            background: #1e293b; color: #ffffff; border-radius: 8px; padding: 15px; border: 1px solid #334155;
-        }
-        .stTabs [data-baseweb="tab"] {
-            padding: 10px 20px; border-radius: 6px; background-color: #e2e8f0; color: #1e293b; font-weight: 700;
-        }
-        .stTabs [aria-selected="true"] { background-color: #0f172a !important; color: #38bdf8 !important; }
-    </style>
-    """
+# 4. Stilizare Aqua Glass Minimalistă & Aerisită
+st.markdown("""
+<style>
+    .stApp { background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    [data-testid="stSidebar"] { display: none; }
 
-st.markdown(css_theme, unsafe_allow_html=True)
+    /* Top Bar Aerisită Aqua */
+    .top-header {
+        background: linear-gradient(135deg, #0284c7 0%, #06b6d4 100%);
+        color: #ffffff;
+        padding: 10px 24px;
+        border-radius: 8px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+        box-shadow: 0 4px 12px rgba(14, 165, 233, 0.15);
+    }
+    .top-header h3 { margin: 0; font-size: 18px; font-weight: 800; color: #ffffff; }
 
-# 4. Header-ul Aplicației
+    /* Meniu Icoane Orizontal (MRPeasy Style) */
+    .mrp-nav-bar {
+        display: flex;
+        background-color: #ffffff;
+        border: 1px solid #e2e8f0;
+        padding: 6px 12px;
+        gap: 10px;
+        align-items: center;
+        margin-bottom: 20px;
+        border-radius: 8px;
+    }
+    .mrp-nav-item {
+        color: #0369a1;
+        font-size: 13px;
+        font-weight: 700;
+        text-decoration: none;
+        padding: 6px 14px;
+        border-radius: 6px;
+        transition: all 0.15s ease-in-out;
+    }
+    .mrp-nav-item:hover { background-color: #e0f2fe; color: #0284c7; }
+    .mrp-nav-active { background-color: #0284c7; color: #ffffff !important; }
+
+    /* Subtabs Orizontale Aerisite */
+    .mrp-subtabs {
+        display: flex;
+        gap: 15px;
+        border-bottom: 2px solid #e2e8f0;
+        padding-bottom: 8px;
+        margin-bottom: 20px;
+        font-size: 13px;
+        font-weight: 600;
+    }
+    .mrp-subtab-active { color: #0284c7; border-bottom: 2px solid #0284c7; padding-bottom: 8px; text-decoration: none; font-weight: 700; }
+    .mrp-subtab { color: #64748b; text-decoration: none; }
+    .mrp-subtab:hover { color: #0f172a; }
+
+    /* Launchpad Carduri Minimaliste (Pagină Principală) */
+    .launchpad-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 20px;
+        margin-top: 10px;
+    }
+    .launchpad-card {
+        background-color: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-top: 4px solid #0ea5e9;
+        border-radius: 10px;
+        padding: 24px 20px;
+        text-align: center;
+        text-decoration: none;
+        transition: all 0.2s ease-in-out;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.03);
+    }
+    .launchpad-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 10px 20px rgba(14, 165, 233, 0.12);
+        border-top-color: #06b6d4;
+    }
+    .launchpad-icon { font-size: 32px; margin-bottom: 12px; }
+    .launchpad-title { font-size: 15px; font-weight: 800; color: #0f172a; margin-bottom: 6px; }
+    .launchpad-desc { font-size: 12px; color: #64748b; line-height: 1.4; }
+</style>
+""", unsafe_allow_html=True)
+
+# 5. Top Bar Superior
 now_str = datetime.now().strftime("%d/%m/%Y %H:%M")
 st.markdown(f"""
-<div class="main-card-header">
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-        <div>
-            <h2 style="margin:0; font-size: 24px; font-weight: 800;">CAN PROD - Sistem Producție v2</h2>
-            <span style="font-size: 13px; opacity: 0.9;">Platformă ERP Customizată &nbsp;|&nbsp; {now_str}</span>
-        </div>
-        <div style="text-align: right; font-size: 13px; font-weight: 600;">
-            📍 Locație: ROU &nbsp;|&nbsp; 👤 Operator: Admin
-        </div>
+<div class="top-header">
+    <div>
+        <h3>CAN PROD &nbsp;|&nbsp; ERP Custom</h3>
+    </div>
+    <div style="font-size: 12px; font-weight: 600; opacity: 0.95;">
+        🌐 ROU &nbsp;|&nbsp; 👤 Admin &nbsp;|&nbsp; ⏱️ {now_str}
     </div>
 </div>
 """, unsafe_allow_html=True)
 
-# 5. Meniu Lateral Navigare
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 📋 Navigare Module")
-menu_module = st.sidebar.radio("", [
-    "📦 Stoc & Gestiune Materii",
-    "⚙️ Operatori & Norme Lucru",
-    "📑 Rețete Producție (BOM)",
-    "📊 Oferte & Comenzi (RFQ)"
-])
+# 6. Meniu Meniu Orizontal de Navigare Quick-Links
+active_h = "mrp-nav-active" if active_page == "Home" else ""
+active_s = "mrp-nav-active" if active_page == "Stock" else ""
+active_b = "mrp-nav-active" if active_page == "BOM" else ""
+active_r = "mrp-nav-active" if active_page == "RFQ" else ""
+
+st.markdown(f"""
+<div class="mrp-nav-bar">
+    <a href="?page=Home" target="_self" class="mrp-nav-item {active_h}">🏠 Acasă</a>
+    <a href="?page=Stock" target="_self" class="mrp-nav-item {active_s}">📦 Stoc & Gestiune</a>
+    <a href="?page=BOM" target="_self" class="mrp-nav-item {active_b}">📑 Rețete & Operatori</a>
+    <a href="?page=RFQ" target="_self" class="mrp-nav-item {active_r}">📊 Oferte & Comenzi</a>
+</div>
+""", unsafe_allow_html=True)
 
 conn = get_db()
 
 # ==========================================
-# MODUL: STOC & GESTIUNE MATERII
+# 1. ECRAN PRINCIPAL (LAUNCHPAD MINIMALIST)
 # ==========================================
-if menu_module == "📦 Stoc & Gestiune Materii":
-    
-    # KPI-uri vizuale
-    col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
-    
-    total_items = conn.cursor().execute("SELECT COUNT(*) FROM stock_items").fetchone()[0]
-    total_suppliers = conn.cursor().execute("SELECT COUNT(*) FROM suppliers").fetchone()[0]
-    total_wh = conn.cursor().execute("SELECT COUNT(*) FROM warehouses").fetchone()[0]
-    total_units = conn.cursor().execute("SELECT COUNT(*) FROM units").fetchone()[0]
-
-    with col_kpi1:
-        st.markdown(f'<div class="metric-box"><span>📦 Total Articole Stoc</span><h2 style="margin:5px 0 0 0; color:#0284c7;">{total_items}</h2></div>', unsafe_allow_html=True)
-    with col_kpi2:
-        st.markdown(f'<div class="metric-box"><span>🚚 Furnizori Activi</span><h2 style="margin:5px 0 0 0; color:#0284c7;">{total_suppliers}</h2></div>', unsafe_allow_html=True)
-    with col_kpi3:
-        st.markdown(f'<div class="metric-box"><span>🏭 Depozite / Gestiuni</span><h2 style="margin:5px 0 0 0; color:#0284c7;">{total_wh}</h2></div>', unsafe_allow_html=True)
-    with col_kpi4:
-        st.markdown(f'<div class="metric-box"><span>📏 Unități de Măsură</span><h2 style="margin:5px 0 0 0; color:#0284c7;">{total_units}</h2></div>', unsafe_allow_html=True)
-
-    st.write("")
+if active_page == "Home":
+    st.markdown("#### Meniu Principal")
+    st.caption("Alege modulul pe care dorești să îl accesezi. Datele se încarcă numai la deschiderea modulului.")
     st.write("")
 
-    # Tabs Principal Stoc
-    tab_items, tab_suppliers, tab_warehouses, tab_units = st.tabs([
-        "📄 Articole Stoc (Materie Primă & Buy Parts)",
-        "🚚 Furnizori (Suppliers)",
-        "🏭 Depozite & Gestiuni (Warehouses)",
-        "📏 Unități de Măsură (Units)"
-    ])
+    st.markdown("""
+    <div class="launchpad-grid">
+        <a href="?page=Stock" target="_self" class="launchpad-card">
+            <div class="launchpad-icon">📦</div>
+            <div class="launchpad-title">Stoc & Gestiune</div>
+            <div class="launchpad-desc">Articole materii prime, piese cumpărate, furnizori, depozite și unități.</div>
+        </a>
+        <a href="?page=BOM" target="_self" class="launchpad-card">
+            <div class="launchpad-icon">📑</div>
+            <div class="launchpad-title">Rețete & Tehnologie</div>
+            <div class="launchpad-desc">Definire bonuri de consum (BOM), norme de lucru și tarife operații.</div>
+        </a>
+        <a href="?page=RFQ" target="_self" class="launchpad-card">
+            <div class="launchpad-icon">📊</div>
+            <div class="launchpad-title">Oferte & Comenzi</div>
+            <div class="launchpad-desc">Generare calculații de preț, oferte RFQ și comenzi de vânzare clienți.</div>
+        </a>
+        <a href="?page=Home" target="_self" class="launchpad-card">
+            <div class="launchpad-icon">⚙️</div>
+            <div class="launchpad-title">Setări & Utilitare</div>
+            <div class="launchpad-desc">Configurări generale, drepturi utilizatori și import/export date.</div>
+        </a>
+    </div>
+    """, unsafe_allow_html=True)
 
-    # --- TAB 1: ARTICOLE STOC ---
-    with tab_items:
-        c1, c2, c3 = st.columns([6, 2, 2])
-        with c1:
-            st.markdown("#### Nomenclator Articole")
-        with c2:
+# ==========================================
+# 2. MODUL STOC & GESTIUNE (ÎNCĂRCARE DOAR LA SOLICITARE)
+# ==========================================
+elif active_page == "Stock":
+    
+    subtabs = [
+        ("Items", "📄 Nomenclator Articole"),
+        ("Suppliers", "🚚 Furnizori"),
+        ("Warehouses", "🏭 Depozite / Gestiuni"),
+        ("Units", "📏 Unități de Măsură")
+    ]
+
+    subtabs_html = '<div class="mrp-subtabs">'
+    for tab_key, tab_label in subtabs:
+        act_class = "mrp-subtab-active" if active_subtab == tab_key else "mrp-subtab"
+        subtabs_html += f'<a href="?page=Stock&subtab={tab_key}" target="_self" class="{act_class}">{tab_label}</a>'
+    subtabs_html += '</div>'
+
+    st.markdown(subtabs_html, unsafe_allow_html=True)
+
+    # --- SUBTAB 1: NOMENCLATOR ARTICOLE ---
+    if active_subtab == "Items":
+        c_head, c_btn1, c_btn2 = st.columns([6, 2, 2])
+        with c_head:
+            st.markdown("##### Articole Stoc (Materie Primă & Buy Parts)")
+        
+        with c_btn1:
             with st.popover("➕ Adaugă Articol Nou", use_container_width=True):
                 with st.form("add_item_form"):
                     code = st.text_input("Cod Articol / Part No. *")
@@ -256,19 +300,19 @@ if menu_module == "📦 Stoc & Gestiune Materii":
                             except Exception as e:
                                 st.error(f"Eroare: {e}")
 
-        with c3:
-            with st.popover("↑ Import din MRPeasy CSV", use_container_width=True):
-                st.caption("Alege fișierul CSV exportat din MRPeasy pentru încărcare automată.")
-                st.file_uploader("Încarcă fișier CSV", type=['csv'], key="import_items_csv")
+        with c_btn2:
+            with st.popover("↑ Import MRPeasy CSV", use_container_width=True):
+                st.caption("Încarcă fișierul CSV exportat din MRPeasy.")
+                st.file_uploader("CSV Stoc", type=['csv'], key="import_items_csv")
 
         st.write("")
         
-        # Căutare și Filtrare
-        f_c1, f_c2 = st.columns([6, 4])
-        with f_c1:
-            search_code = st.text_input("🔍 Căutare după Cod sau Denumire", placeholder="Caută reper...")
-        with f_c2:
-            search_cat = st.selectbox("Categorie", ["Toate"] + ["MATERIE PRIMA", "BUY PART", "CONSUMABIL", "SUBANSAMBLU"])
+        # Filtre Compacte
+        f1, f2 = st.columns([6, 4])
+        with f1:
+            search_code = st.text_input("🔍 Căutare după Cod sau Denumire", placeholder="Tastează pentru a filtra...", label_visibility="collapsed")
+        with f2:
+            search_cat = st.selectbox("Categorie", ["Toate Categories"] + ["MATERIE PRIMA", "BUY PART", "CONSUMABIL", "SUBANSAMBLU"], label_visibility="collapsed")
 
         query_items = """
             SELECT 
@@ -292,19 +336,19 @@ if menu_module == "📦 Stoc & Gestiune Materii":
         if search_code:
             query_items += " AND (si.code LIKE ? OR si.name LIKE ?)"
             params_items.extend([f"%{search_code}%", f"%{search_code}%"])
-        if search_cat != "Toate":
+        if search_cat != "Toate Categories":
             query_items += " AND si.category = ?"
             params_items.append(search_cat)
 
         df_items = pd.read_sql_query(query_items, conn, params=params_items)
         st.dataframe(df_items, use_container_width=True, hide_index=True)
 
-    # --- TAB 2: FURNIZORI ---
-    with tab_suppliers:
-        s_top1, s_top2 = st.columns([8, 2])
-        with s_top1:
-            st.markdown("#### Lista Furnizorilor")
-        with s_top2:
+    # --- SUBTAB 2: FURNIZORI ---
+    elif active_subtab == "Suppliers":
+        s_head, s_btn = st.columns([8, 2])
+        with s_head:
+            st.markdown("##### Gestiune Furnizori (Suppliers)")
+        with s_btn:
             with st.popover("➕ Adaugă Furnizor", use_container_width=True):
                 with st.form("add_supplier_form"):
                     s_code = st.text_input("Cod Furnizor (ex: F003)")
@@ -323,12 +367,12 @@ if menu_module == "📦 Stoc & Gestiune Materii":
         df_s = pd.read_sql_query("SELECT code as Cod, name as 'Nume Furnizor', contact_person as 'Persoană Contact', phone as Telefon, email as Email, lead_time_days as 'Timp Livrare (Zile)' FROM suppliers ORDER BY name", conn)
         st.dataframe(df_s, use_container_width=True, hide_index=True)
 
-    # --- TAB 3: DEPOZITE ---
-    with tab_warehouses:
-        w_top1, w_top2 = st.columns([8, 2])
-        with w_top1:
-            st.markdown("#### Depozite & Locații Stocare")
-        with w_top2:
+    # --- SUBTAB 3: DEPOZITE ---
+    elif active_subtab == "Warehouses":
+        w_head, w_btn = st.columns([8, 2])
+        with w_head:
+            st.markdown("##### Depozite & Gestiuni Locații")
+        with w_btn:
             with st.popover("➕ Adaugă Depozit", use_container_width=True):
                 with st.form("add_wh_form"):
                     w_code = st.text_input("Cod Locație (ex: DEP-03)")
@@ -342,12 +386,12 @@ if menu_module == "📦 Stoc & Gestiune Materii":
         df_w = pd.read_sql_query("SELECT code as Cod, name as 'Denumire Depozit / Locație', location_type as 'Tip Gestiune' FROM warehouses ORDER BY name", conn)
         st.dataframe(df_w, use_container_width=True, hide_index=True)
 
-    # --- TAB 4: UNITĂȚI DE MĂSURĂ ---
-    with tab_units:
-        u_top1, u_top2 = st.columns([8, 2])
-        with u_top1:
-            st.markdown("#### Unități de Măsură")
-        with u_top2:
+    # --- SUBTAB 4: UNITĂȚI ---
+    elif active_subtab == "Units":
+        u_head, u_btn = st.columns([8, 2])
+        with u_head:
+            st.markdown("##### Unități de Măsură")
+        with u_btn:
             with st.popover("➕ Adaugă Unitate", use_container_width=True):
                 with st.form("add_u_form"):
                     u_code = st.text_input("Cod Unitate (ex: buc)")
@@ -360,8 +404,15 @@ if menu_module == "📦 Stoc & Gestiune Materii":
         df_u = pd.read_sql_query("SELECT code as Cod, name as 'Descriere Unitate' FROM units ORDER BY code", conn)
         st.dataframe(df_u, use_container_width=True, hide_index=True)
 
-else:
-    st.subheader(f"Modul: {menu_module}")
-    st.info("Pregătit pentru configurarea detaliată în pasul următor.")
+# ==========================================
+# 3. CELELALTE MODULE
+# ==========================================
+elif active_page == "BOM":
+    st.markdown("#### Rețete de Producție (BOM) & Operatori")
+    st.info("Modulul de Rețete & Tehnologie este gata de configurat.")
+
+elif active_page == "RFQ":
+    st.markdown("#### Oferte & Comenzi (RFQ)")
+    st.info("Modulul de Oferte & Comenzi este gata de configurat.")
 
 conn.close()
