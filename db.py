@@ -115,11 +115,6 @@ def init_custom_db():
         for c, n, t in [('WH-MAIN', 'Main Central Warehouse', 'Internal Warehouse'), ('WH-CUST', 'Customer Virtual Location', 'Customer Virtual Storage')]:
             cursor.execute("INSERT INTO warehouses (code, name, location_type) VALUES (?, ?, ?)", (c, n, t))
 
-    cursor.execute("SELECT COUNT(*) FROM customers")
-    if cursor.fetchone()[0] == 0:
-        cursor.execute("INSERT INTO customers (code, name, cui, contact_person, email) VALUES (?, ?, ?, ?, ?)", 
-                       ('CUST-001', 'Client Generic SRL', 'RO123456', 'Ion Client', 'contact@client.ro'))
-
     conn.commit()
     populate_missing_uniq_codes(conn)
     conn.close()
@@ -286,6 +281,75 @@ def import_mrpeasy_items(df):
                            (uniq_code, item_code, clean_name, category, sub_group, unit_id, warehouse_id, price, sell_price, weight_val, weight_unit, stock, min_st))
             ins += 1
     conn.commit()
+    return ins, upd
+
+def import_mrpeasy_customers(df):
+    conn = get_db()
+    cursor = conn.cursor()
+    ins = 0; upd = 0
+    col_map = {str(col).strip().lower(): col for col in df.columns}
+
+    for _, row in df.iterrows():
+        def get_field(name_list):
+            for n in name_list:
+                if n in col_map:
+                    val = str(row[col_map[n]]).strip()
+                    if val and val.lower() != 'nan':
+                        return val
+            return ''
+
+        code = get_field(['number', 'code', 'customer code'])
+        name = get_field(['name', 'customer name', 'company name'])
+        
+        if not code or not name:
+            continue
+
+        val_reg = get_field(['reg. no.', 'reg. no', 'reg no', 'registration number'])
+        val_vat = get_field(['tax/vat number', 'tax number', 'vat number', 'cui'])
+
+        cui = ''
+        reg_com = ''
+
+        for val in [val_reg, val_vat]:
+            if not val or val.lower() in ['nan', 'xxxx', '0000000', 'none']:
+                continue
+            val_upper = val.upper()
+            if 'J' in val_upper or 'F' in val_upper or '/' in val:
+                if not reg_com: reg_com = val
+            else:
+                if not cui: cui = val
+
+        address_parts = []
+        for col_name in ['address', 'first line of address', 'second line of address', 'city', 'state', 'postal code', 'country']:
+            v = get_field([col_name])
+            if v and v not in address_parts:
+                address_parts.append(v)
+        address = ", ".join(address_parts)
+
+        fn = get_field(['first name'])
+        ln = get_field(['last name'])
+        contact_person = f"{fn} {ln}".strip()
+
+        phone = get_field(['phone', 'address phone'])
+        email = get_field(['e-mail', 'email'])
+
+        cursor.execute("SELECT id FROM customers WHERE code = ? OR (cui != '' AND cui = ?)", (code, cui))
+        ex = cursor.fetchone()
+        if ex:
+            cursor.execute("""
+                UPDATE customers SET code=?, name=?, cui=?, reg_com=?, address=?, contact_person=?, phone=?, email=?
+                WHERE id=?
+            """, (code, name, cui, reg_com, address, contact_person, phone, email, ex[0]))
+            upd += 1
+        else:
+            cursor.execute("""
+                INSERT INTO customers (code, name, cui, reg_com, address, contact_person, phone, email)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (code, name, cui, reg_com, address, contact_person, phone, email))
+            ins += 1
+
+    conn.commit()
+    conn.close()
     return ins, upd
 
 def safe_float(val):
