@@ -181,6 +181,11 @@ def init_custom_db():
     if 'customer_id' not in existing_wh_cols:
         cursor.execute("ALTER TABLE warehouses ADD COLUMN customer_id INTEGER")
 
+    cursor.execute("PRAGMA table_info(product_boms)")
+    existing_pb_cols = [col[1] for col in cursor.fetchall()]
+    if 'calculated_weight' not in existing_pb_cols:
+        cursor.execute("ALTER TABLE product_boms ADD COLUMN calculated_weight REAL DEFAULT 0.0")
+
     # DEFAULT UNITS
     cursor.execute("SELECT COUNT(*) FROM units")
     if cursor.fetchone()[0] == 0:
@@ -193,7 +198,7 @@ def init_custom_db():
         for c, n, t in [('WH-MAIN', 'Main Central Warehouse', 'Internal Warehouse'), ('WH-FINISHED', 'Finished Goods Storage', 'Internal Warehouse')]:
             cursor.execute("INSERT INTO warehouses (code, name, location_type) VALUES (?, ?, ?)", (c, n, t))
 
-    # AUTO GENERATE VIRTUAL WAREHOUSES FOR ALL EXISTING CUSTOMERS
+    # AUTO GENERATE VIRTUAL WAREHOUSES FOR ALL EXISTING CUSTOMERS (EXACT NAME)
     auto_create_customer_warehouses(conn)
 
     conn.commit()
@@ -206,10 +211,13 @@ def auto_create_customer_warehouses(conn):
     custs = cursor.fetchall()
     for c_id, c_code, c_name in custs:
         wh_code = f"WH-CUST-{c_id:03d}"
-        wh_name = f"Virtual WH - {c_name}"
+        wh_name = c_name.strip()
         cursor.execute("SELECT id FROM warehouses WHERE customer_id = ?", (c_id,))
-        if not cursor.fetchone():
+        existing = cursor.fetchone()
+        if not existing:
             cursor.execute("INSERT INTO warehouses (code, name, location_type, customer_id) VALUES (?, ?, 'Customer Virtual Storage', ?)", (wh_code, wh_name, c_id))
+        else:
+            cursor.execute("UPDATE warehouses SET name = ? WHERE id = ?", (wh_name, existing[0]))
     conn.commit()
 
 def populate_missing_uniq_codes(conn):
@@ -240,7 +248,7 @@ def populate_missing_uniq_codes(conn):
         if code and code.startswith('A0') and cat_upper in ['FINISHED GOOD', 'PRODUSE FINITE']:
             new_code = code
         else:
-            next_num = max_num + 1 if max_num > 0 else (1834 if prefix == 'A0' else 1)
+            next_num = max_num + 1 if max_num > 0 else (1920 if prefix == 'A0' else 1)
             new_code = f"A0{next_num:04d}" if prefix == 'A0' else f"{prefix}{next_num:04d}"
 
         cursor.execute("UPDATE stock_items SET uniq_code = ? WHERE id = ?", (new_code, item_id))
