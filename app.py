@@ -1,9 +1,9 @@
 import streamlit as st
 import pandas as pd
 import requests
+from datetime import datetime
 from db import init_custom_db, get_db, generate_unique_item_code, import_mrpeasy_items, safe_float
 from ui import load_css, render_top_header, render_nav_bar
-from datetime import datetime
 
 st.set_page_config(page_title="CAN Prod ERP Custom", layout="wide", initial_sidebar_state="collapsed")
 
@@ -25,7 +25,7 @@ conn = get_db()
 def fetch_anaf_data(cui):
     try:
         clean_cui = ''.join(filter(str.isdigit, str(cui)))
-        if not clean_cui: return None
+        if not clean_cui: return None, "CUI invalid (conține doar litere)."
         
         today = datetime.now().strftime("%Y-%m-%d")
         url = "https://webservicesp.anaf.ro/PlatitorTvaRest/api/v8/ws/tva"
@@ -33,18 +33,22 @@ def fetch_anaf_data(cui):
         headers = {"Content-Type": "application/json"}
         
         response = requests.post(url, json=payload, headers=headers, timeout=10)
+        
         if response.status_code == 200:
             data = response.json()
-            if data.get('found') and len(data.get('found')) > 0:
+            if data.get('cod') == 200 and data.get('found') and len(data.get('found')) > 0:
                 company = data['found'][0]
                 return {
                     'name': company.get('denumire', ''),
                     'address': company.get('adresa', ''),
                     'reg_com': company.get('nrRegCom', '')
-                }
+                }, None
+            else:
+                return None, "CUI-ul nu a fost găsit în baza de date ANAF."
+        else:
+            return None, f"Eroare server ANAF (Cod: {response.status_code})"
     except Exception as e:
-        return None
-    return None
+        return None, f"Eroare de conexiune la server: {str(e)}"
 
 # Callback Functions for Filters
 def reset_raw_filters_callback():
@@ -199,24 +203,26 @@ def add_supplier_dialog():
     conn_dialog = get_db()
     
     st.subheader("🔍 Auto-Complete via ANAF API")
-    st.caption("Enter the supplier's CUI to automatically fetch official data.")
+    st.caption("Introdu CUI-ul furnizorului (ex: RO123456) pentru a descărca datele oficiale.")
     col_anaf1, col_anaf2 = st.columns([3, 1])
     with col_anaf1:
-        search_cui = st.text_input("Enter CUI (RO...)", key="search_cui_input")
+        search_cui = st.text_input("CUI (RO...)", key="search_cui_input")
     with col_anaf2:
         st.write(""); st.write("")
         if st.button("Search ANAF", use_container_width=True):
             if search_cui:
-                data = fetch_anaf_data(search_cui)
+                with st.spinner('Se caută la ANAF...'):
+                    data, err = fetch_anaf_data(search_cui)
                 if data:
                     st.session_state['anaf_name'] = data['name']
                     st.session_state['anaf_address'] = data['address']
                     st.session_state['anaf_reg'] = data['reg_com']
                     st.session_state['anaf_cui'] = search_cui
-                    st.success("Data fetched successfully!")
-                    st.rerun()
+                    st.success("Date descărcate cu succes!")
                 else:
-                    st.error("Company not found or ANAF API error.")
+                    st.error(err)
+            else:
+                st.warning("Introdu un CUI înainte de a căuta!")
     
     st.divider()
     
