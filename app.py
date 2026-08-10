@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 from datetime import datetime
-from db import init_custom_db, get_db, generate_unique_item_code, import_mrpeasy_items, import_mrpeasy_customers, safe_float
+from db import init_custom_db, get_db, generate_unique_item_code, generate_unique_customer_code, import_mrpeasy_items, import_mrpeasy_customers, safe_float
 from ui import load_css, render_top_header, render_nav_bar
 
 st.set_page_config(page_title="CAN Prod ERP Custom", layout="wide", initial_sidebar_state="collapsed")
@@ -151,9 +151,17 @@ def add_new_item_dialog(default_type="Raw Material"):
 
         if st.form_submit_button("💾 Save Item", type="primary", use_container_width=True):
             if auto_uniq and name:
-                conn_dialog.cursor().execute("""INSERT INTO stock_items (uniq_code, code, name, category, sub_group, supplier_id, unit_id, warehouse_id, purchase_price, selling_price, specific_weight, weight_unit, current_stock, min_stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", 
-                                      (auto_uniq, code, name, category, sub_group, s_dict.get(selected_s), u_dict.get(selected_u), w_dict.get(selected_w), price, selling_p, spec_weight, w_unit, stock_qty, min_stock_qty))
-                conn_dialog.commit(); st.success("Item saved!"); st.rerun()
+                cursor = conn_dialog.cursor()
+                # Anti-duplicate check for stock items
+                cursor.execute("SELECT id FROM stock_items WHERE code = ? OR name = ?", (code.strip(), name.strip()))
+                if cursor.fetchone():
+                    st.warning(f"⚠️ An item with the code '{code.strip()}' or name '{name.strip()}' already exists in stock!")
+                else:
+                    cursor.execute("""INSERT INTO stock_items (uniq_code, code, name, category, sub_group, supplier_id, unit_id, warehouse_id, purchase_price, selling_price, specific_weight, weight_unit, current_stock, min_stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", 
+                                          (auto_uniq, code.strip(), name.strip(), category, sub_group, s_dict.get(selected_s), u_dict.get(selected_u), w_dict.get(selected_w), price, selling_p, spec_weight, w_unit, stock_qty, min_stock_qty))
+                    conn_dialog.commit(); st.success("Item saved!"); st.rerun()
+            else:
+                st.warning("Please fill in Part Description / Name!")
 
 @st.dialog("✏️ Edit Item Details")
 def edit_item_dialog(item_id):
@@ -245,12 +253,17 @@ def add_supplier_dialog():
 
         if st.form_submit_button("💾 Save Supplier", type="primary", use_container_width=True):
             if s_code and s_name:
-                conn_dialog.cursor().execute("INSERT INTO suppliers (code, name, supplier_type, contact_person, phone, email, lead_time_days, cui, reg_com, address, iban, bank_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", 
-                                            (s_code.strip(), s_name.strip(), s_type, s_contact.strip(), s_phone.strip(), s_email.strip(), s_lt, s_cui.strip(), s_reg.strip(), s_address.strip(), s_iban.strip(), s_bank.strip()))
-                conn_dialog.commit()
-                for k in ['s_anaf_cui', 's_anaf_name', 's_anaf_address', 's_anaf_reg']:
-                    if k in st.session_state: del st.session_state[k]
-                st.success("Supplier saved!"); st.rerun()
+                cursor = conn_dialog.cursor()
+                cursor.execute("SELECT id FROM suppliers WHERE code = ? OR name = ?", (s_code.strip(), s_name.strip()))
+                if cursor.fetchone():
+                    st.warning(f"⚠️ A supplier with code '{s_code.strip()}' or name '{s_name.strip()}' already exists!")
+                else:
+                    cursor.execute("INSERT INTO suppliers (code, name, supplier_type, contact_person, phone, email, lead_time_days, cui, reg_com, address, iban, bank_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", 
+                                                (s_code.strip(), s_name.strip(), s_type, s_contact.strip(), s_phone.strip(), s_email.strip(), s_lt, s_cui.strip(), s_reg.strip(), s_address.strip(), s_iban.strip(), s_bank.strip()))
+                    conn_dialog.commit()
+                    for k in ['s_anaf_cui', 's_anaf_name', 's_anaf_address', 's_anaf_reg']:
+                        if k in st.session_state: del st.session_state[k]
+                    st.success("Supplier saved!"); st.rerun()
 
 @st.dialog("✏️ Edit Supplier Details")
 def edit_supplier_dialog(supp_id):
@@ -289,6 +302,8 @@ def edit_supplier_dialog(supp_id):
 @st.dialog("➕ Add New Customer")
 def add_customer_dialog():
     conn_dialog = get_db()
+    auto_cust_code = generate_unique_customer_code(conn_dialog)
+    
     st.subheader("🔍 Auto-Complete via ANAF API")
     col_anaf1, col_anaf2 = st.columns([3, 1])
     with col_anaf1: search_cui = st.text_input("CUI (RO...)", key="c_cui_input")
@@ -308,8 +323,8 @@ def add_customer_dialog():
         st.subheader("Customer Details")
         col1, col2 = st.columns(2)
         with col1:
-            c_code = st.text_input("Customer Code *", placeholder="e.g. CUST001")
-            c_cui = st.text_input("CUI / Tax ID *", value=st.session_state.get('c_anaf_cui', ''))
+            st.text_input("Customer Code (Auto-Generated) *", value=auto_cust_code, disabled=True)
+            c_cui = st.text_input("CUI / Tax ID", value=st.session_state.get('c_anaf_cui', ''))
             c_name = st.text_input("Customer Name *", value=st.session_state.get('c_anaf_name', ''))
             c_reg = st.text_input("Reg. Com. (J.../...)", value=st.session_state.get('c_anaf_reg', ''))
             c_address = st.text_area("Address", value=st.session_state.get('c_anaf_address', ''), height=105)
@@ -322,13 +337,26 @@ def add_customer_dialog():
             c_bank = st.text_input("Bank Name")
 
         if st.form_submit_button("💾 Save Customer", type="primary", use_container_width=True):
-            if c_code and c_name:
-                conn_dialog.cursor().execute("INSERT INTO customers (code, name, cui, reg_com, address, iban, bank_name, contact_person, phone, email) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", 
-                                            (c_code.strip(), c_name.strip(), c_cui.strip(), c_reg.strip(), c_address.strip(), c_iban.strip(), c_bank.strip(), c_contact.strip(), c_phone.strip(), c_email.strip()))
-                conn_dialog.commit()
-                for k in ['c_anaf_cui', 'c_anaf_name', 'c_anaf_address', 'c_anaf_reg']:
-                    if k in st.session_state: del st.session_state[k]
-                st.success("Customer saved!"); st.rerun()
+            if c_name.strip():
+                cursor = conn_dialog.cursor()
+                # Anti-duplicate check
+                query_check = "SELECT id FROM customers WHERE name = ?"
+                params_check = [c_name.strip()]
+                if c_cui.strip():
+                    query_check += " OR (cui != '' AND cui = ?)"
+                    params_check.append(c_cui.strip())
+                cursor.execute(query_check, params_check)
+                if cursor.fetchone():
+                    st.warning(f"⚠️ A customer with the name '{c_name.strip()}' or CUI '{c_cui.strip()}' already exists!")
+                else:
+                    cursor.execute("INSERT INTO customers (code, name, cui, reg_com, address, iban, bank_name, contact_person, phone, email) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", 
+                                                (auto_cust_code, c_name.strip(), c_cui.strip(), c_reg.strip(), c_address.strip(), c_iban.strip(), c_bank.strip(), c_contact.strip(), c_phone.strip(), c_email.strip()))
+                    conn_dialog.commit()
+                    for k in ['c_anaf_cui', 'c_anaf_name', 'c_anaf_address', 'c_anaf_reg']:
+                        if k in st.session_state: del st.session_state[k]
+                    st.success("Customer saved!"); st.rerun()
+            else:
+                st.warning("Please fill in Customer Name!")
 
 @st.dialog("✏️ Edit Customer Details")
 def edit_customer_dialog(cust_id):
@@ -340,7 +368,7 @@ def edit_customer_dialog(cust_id):
         with st.form("edit_customer_form"):
             col1, col2 = st.columns(2)
             with col1:
-                e_code = st.text_input("Customer Code *", value=row[0])
+                st.text_input("Customer Code (Read-Only) *", value=row[0], disabled=True)
                 e_cui = st.text_input("CUI / Tax ID", value=row[2] if row[2] else "")
                 e_name = st.text_input("Customer Name *", value=row[1])
                 e_reg = st.text_input("Reg. Com.", value=row[3] if row[3] else "")
@@ -355,8 +383,8 @@ def edit_customer_dialog(cust_id):
 
             c_save, c_del = st.columns([8, 2])
             if c_save.form_submit_button("💾 Save Changes", type="primary", use_container_width=True):
-                cursor.execute("UPDATE customers SET code=?, name=?, cui=?, reg_com=?, address=?, iban=?, bank_name=?, contact_person=?, phone=?, email=? WHERE id=?", 
-                               (e_code, e_name, e_cui, e_reg, e_address, e_iban, e_bank, e_contact, e_phone, e_email, cust_id))
+                cursor.execute("UPDATE customers SET name=?, cui=?, reg_com=?, address=?, iban=?, bank_name=?, contact_person=?, phone=?, email=? WHERE id=?", 
+                               (e_name.strip(), e_cui.strip(), e_reg.strip(), e_address.strip(), e_iban.strip(), e_bank.strip(), e_contact.strip(), e_phone.strip(), e_email.strip(), cust_id))
                 conn_dialog.commit(); st.success("Updated!"); st.rerun()
             if c_del.form_submit_button("🗑️ Delete", use_container_width=True):
                 cursor.execute("DELETE FROM customers WHERE id = ?", (cust_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
