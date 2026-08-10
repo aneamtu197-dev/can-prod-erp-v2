@@ -667,7 +667,9 @@ def add_new_item_dialog():
                 auto_uniq = generate_unique_item_code(conn, "FINISHED GOOD")
                 category = st.selectbox("Category *", ["FINISHED GOOD", "SUBASSEMBLY"])
 
-            uniq_code = st.text_input("Uniq Code (Auto-Generated) *", value=auto_uniq)
+            # Render Unique Code as disabled/read-only to prevent user changes
+            st.text_input("Uniq Code (Auto-Generated) *", value=auto_uniq, disabled=True)
+            
             code = st.text_input("Part No. / Original Code *", value=auto_uniq)
             name = st.text_input("Part Description / Name *", placeholder="e.g. Teava Rotunda FI 48.3x4 mm")
             
@@ -706,44 +708,49 @@ def add_new_item_dialog():
 
         st.divider()
         if st.form_submit_button("💾 Save Item to Stock", type="primary", use_container_width=True):
-            if uniq_code and name:
+            if auto_uniq and name:
                 try:
                     cursor = conn.cursor()
                     cursor.execute("""
                         INSERT INTO stock_items 
                         (uniq_code, code, name, category, sub_group, supplier_id, unit_id, warehouse_id, purchase_price, selling_price, specific_weight, weight_unit, current_stock, min_stock)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (uniq_code.strip(), code.strip(), name.strip(), category, sub_group, s_dict.get(selected_s) if selected_s else None, u_dict.get(selected_u), w_dict.get(selected_w), price, selling_p, spec_weight, w_unit, stock_qty, min_stock_qty))
+                    """, (auto_uniq.strip(), code.strip(), name.strip(), category, sub_group, s_dict.get(selected_s) if selected_s else None, u_dict.get(selected_u), w_dict.get(selected_w), price, selling_p, spec_weight, w_unit, stock_qty, min_stock_qty))
                     conn.commit()
-                    st.success(f"Item {uniq_code} saved successfully!")
+                    st.success(f"Item {auto_uniq} saved successfully!")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error saving item: {e}")
             else:
-                st.warning("Please fill in Uniq Code and Name!")
+                st.warning("Please fill in Part No. and Name!")
 
 # DIALOG MODAL POP-UP PENTRU EDITARE ȘI ȘTERGERE ITEM EXISTENT
 @st.dialog("✏️ Edit Item Details")
 def edit_item_dialog(item_id):
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM stock_items WHERE id = ?", (item_id,))
+    # Explicit column selection to prevent index shifting bugs from ALTER TABLE
+    cursor.execute("""
+        SELECT uniq_code, code, name, category, sub_group, supplier_id, unit_id, warehouse_id, 
+               purchase_price, selling_price, specific_weight, weight_unit, current_stock, min_stock 
+        FROM stock_items WHERE id = ?
+    """, (item_id,))
     row = cursor.fetchone()
     
     if row:
-        i_uniq = row[1] if row[1] else ""
-        i_code = row[2] if row[2] else ""
-        i_name = row[3] if row[3] else ""
-        i_cat = row[4] if row[4] else "RAW MATERIAL"
-        i_sub = row[5] if row[5] else "General"
-        i_supp_id = row[6]
-        i_unit_id = row[7]
-        i_wh_id = row[8]
-        i_pprice = safe_float(row[9])
-        i_sprice = safe_float(row[10])
-        i_sweight = safe_float(row[11])
-        i_wunit = row[12] if row[12] else "kg"
-        i_stock = safe_float(row[13])
-        i_minstock = safe_float(row[14])
+        i_uniq = row[0] if row[0] else ""
+        i_code = row[1] if row[1] else ""
+        i_name = row[2] if row[2] else ""
+        i_cat = row[3] if row[3] else "RAW MATERIAL"
+        i_sub = row[4] if row[4] else "General"
+        i_supp_id = row[5]
+        i_unit_id = row[6]
+        i_wh_id = row[7]
+        i_pprice = safe_float(row[8])
+        i_sprice = safe_float(row[9])
+        i_sweight = safe_float(row[10])
+        i_wunit = row[11] if row[11] else "kg"
+        i_stock = safe_float(row[12])
+        i_minstock = safe_float(row[13])
 
         st.caption(f"Editing Item ID: #{item_id} | Category: **{i_cat}**")
 
@@ -751,7 +758,9 @@ def edit_item_dialog(item_id):
             col1, col2 = st.columns(2)
             
             with col1:
-                e_uniq = st.text_input("Uniq Code *", value=i_uniq)
+                # Disabled Uniq Code field to prevent user edits
+                st.text_input("Uniq Code (Read-Only) *", value=i_uniq, disabled=True)
+                
                 e_code = st.text_input("Part No. / Original Code *", value=i_code)
                 e_name = st.text_input("Part Description / Name *", value=i_name)
                 
@@ -803,10 +812,10 @@ def edit_item_dialog(item_id):
             if submit_save:
                 cursor.execute("""
                     UPDATE stock_items SET 
-                    uniq_code=?, code=?, name=?, sub_group=?, supplier_id=?, unit_id=?, warehouse_id=?,
+                    code=?, name=?, sub_group=?, supplier_id=?, unit_id=?, warehouse_id=?,
                     purchase_price=?, selling_price=?, specific_weight=?, weight_unit=?, current_stock=?, min_stock=?
                     WHERE id=?
-                """, (e_uniq.strip(), e_code.strip(), e_name.strip(), e_sub, s_dict.get(selected_s), u_dict.get(selected_u), w_dict.get(selected_w), e_pprice, e_sprice, e_sweight, e_wunit, e_stock, e_minstock, item_id))
+                """, (e_code.strip(), e_name.strip(), e_sub, s_dict.get(selected_s), u_dict.get(selected_u), w_dict.get(selected_w), e_pprice, e_sprice, e_sweight, e_wunit, e_stock, e_minstock, item_id))
                 conn.commit()
                 st.success("Item updated successfully!")
                 st.rerun()
@@ -855,11 +864,13 @@ if active_page == "Home":
 # ==========================================
 elif active_page == "Stock":
     
+    # Calculate Synthetic KPIs
     raw_count = conn.cursor().execute("SELECT COUNT(*) FROM stock_items WHERE category = 'RAW MATERIAL'").fetchone()[0]
     buy_count = conn.cursor().execute("SELECT COUNT(*) FROM stock_items WHERE category = 'BUY PART'").fetchone()[0]
     finished_count = conn.cursor().execute("SELECT COUNT(*) FROM stock_items WHERE category IN ('FINISHED GOOD', 'SUBASSEMBLY')").fetchone()[0]
     low_stock_count = conn.cursor().execute("SELECT COUNT(*) FROM stock_items WHERE current_stock <= min_stock AND min_stock > 0").fetchone()[0]
 
+    # Synthetic Metric Bar
     st.markdown(f"""
     <div class="stock-kpi-grid">
         <div class="stock-kpi-card">
@@ -893,6 +904,7 @@ elif active_page == "Stock":
     </div>
     """, unsafe_allow_html=True)
 
+    # Sub-tabs Configuration
     subtabs = [
         ("Raw_Materials", "📄 Raw Materials"),
         ("Buy_Parts", "⚙️ Buy Parts"),
@@ -938,7 +950,7 @@ elif active_page == "Stock":
 
         st.write("")
 
-        # DYNAMIC FILTER OPTIONS
+        # FETCH DYNAMIC FILTER OPTIONS
         supplier_options = ["All Suppliers"] + [r[0] for r in conn.cursor().execute("SELECT DISTINCT s.name FROM stock_items si JOIN suppliers s ON si.supplier_id = s.id WHERE si.category = 'RAW MATERIAL' AND s.name IS NOT NULL ORDER BY s.name").fetchall()]
         uom_options = ["All UoMs"] + [r[0] for r in conn.cursor().execute("SELECT DISTINCT u.code FROM stock_items si JOIN units u ON si.unit_id = u.id WHERE si.category = 'RAW MATERIAL' AND u.code IS NOT NULL ORDER BY u.code").fetchall()]
 
@@ -968,6 +980,7 @@ elif active_page == "Stock":
 
         st.markdown('</div>', unsafe_allow_html=True)
 
+        # BUILD DYNAMIC SQL QUERY BASED ON FILTERS
         q_raw = """
             SELECT 
                 si.id as ID,
