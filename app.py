@@ -28,29 +28,29 @@ def fetch_anaf_data(cui):
         if not clean_cui: return None, "CUI invalid (conține doar cifre)."
         
         today = datetime.now().strftime("%Y-%m-%d")
+        url = "https://webservicesp.anaf.ro/PlatitorTvaRest/api/v8/ws/tva"
         payload = [{"cui": int(clean_cui), "data": today}]
         headers = {"Content-Type": "application/json"}
         
-        # Caută automat prin versiunile ANAF disponibile (v9, v8, v7)
-        for version in ["v9", "v8", "v7"]:
-            url = f"https://webservicesp.anaf.ro/PlatitorTvaRest/api/{version}/ws/tva"
-            response = requests.post(url, json=payload, headers=headers, timeout=10)
-            
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('cod') == 200 and data.get('found') and len(data.get('found')) > 0:
-                    company = data['found'][0]
-                    return {
-                        'name': company.get('denumire', ''),
-                        'address': company.get('adresa', ''),
-                        'reg_com': company.get('nrRegCom', '')
-                    }, None
-                else:
-                    return None, "CUI-ul nu a fost găsit în baza de date ANAF."
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
         
-        return None, f"Eroare server ANAF (Cod: {response.status_code})"
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('cod') == 200 and data.get('found') and len(data.get('found')) > 0:
+                company = data['found'][0]
+                return {
+                    'name': company.get('denumire', ''),
+                    'address': company.get('adresa', ''),
+                    'reg_com': company.get('nrRegCom', '')
+                }, None
+            else:
+                return None, "CUI-ul nu a fost găsit în baza de date ANAF."
+        elif response.status_code in [403, 404]:
+            return None, "🚨 ANAF blochează cererile de pe serverele Streamlit Cloud (Geo-Blocking). Te rugăm să introduci datele manual."
+        else:
+            return None, f"Eroare server ANAF (Cod: {response.status_code})"
     except Exception as e:
-        return None, f"Eroare de conexiune la server: {str(e)}"
+        return None, "🚨 Eroare conexiune ANAF (firewall/blocaj rețea). Te rugăm să introduci datele manual."
 
 # Callback Functions for Filters
 def reset_raw_filters_callback():
@@ -221,6 +221,7 @@ def add_supplier_dialog():
                     st.session_state['anaf_reg'] = data['reg_com']
                     st.session_state['anaf_cui'] = search_cui
                     st.success("Date descărcate cu succes!")
+                    st.rerun()
                 else:
                     st.error(err)
             else:
