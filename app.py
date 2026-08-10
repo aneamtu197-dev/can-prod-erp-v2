@@ -61,27 +61,42 @@ def reset_buy_filters_callback():
 def reset_fg_filters_callback():
     for k in ["f_fg_code", "f_fg_name", "f_fg_cat"]: st.session_state[k] = "All Categories" if "cat" in k else ""
 
-# DIALOG MODALS FOR BULK DELETE
+# DIALOG MODALS FOR BULK DELETE (FIXED THREADING)
 @st.dialog("⚠️ Confirm Bulk Delete")
 def bulk_delete_stock_dialog(item_ids):
     st.error(f"Are you sure you want to delete {len(item_ids)} item(s)? This action cannot be undone.")
-    if st.button("Yes, Delete All", type="primary", use_container_width=True):
-        conn.cursor().execute(f"DELETE FROM stock_items WHERE id IN ({','.join(['?']*len(item_ids))})", item_ids)
-        conn.commit(); st.success("Deleted!"); st.rerun()
+    c1, c2 = st.columns(2)
+    if c1.button("Cancel", use_container_width=True): st.rerun()
+    if c2.button("Yes, Delete All", type="primary", use_container_width=True):
+        conn_dialog = get_db()
+        cursor = conn_dialog.cursor()
+        placeholders = ",".join(["?"] * len(item_ids))
+        cursor.execute(f"DELETE FROM stock_items WHERE id IN ({placeholders})", item_ids)
+        conn_dialog.commit(); st.success("Deleted!"); st.rerun()
 
 @st.dialog("⚠️ Confirm Bulk Delete")
 def bulk_delete_suppliers_dialog(item_ids):
     st.error(f"Are you sure you want to delete {len(item_ids)} supplier(s)? This action cannot be undone.")
-    if st.button("Yes, Delete All", type="primary", use_container_width=True):
-        conn.cursor().execute(f"DELETE FROM suppliers WHERE id IN ({','.join(['?']*len(item_ids))})", item_ids)
-        conn.commit(); st.success("Deleted!"); st.rerun()
+    c1, c2 = st.columns(2)
+    if c1.button("Cancel", use_container_width=True): st.rerun()
+    if c2.button("Yes, Delete All", type="primary", use_container_width=True):
+        conn_dialog = get_db()
+        cursor = conn_dialog.cursor()
+        placeholders = ",".join(["?"] * len(item_ids))
+        cursor.execute(f"DELETE FROM suppliers WHERE id IN ({placeholders})", item_ids)
+        conn_dialog.commit(); st.success("Deleted!"); st.rerun()
 
 @st.dialog("⚠️ Confirm Bulk Delete")
 def bulk_delete_customers_dialog(item_ids):
     st.error(f"Are you sure you want to delete {len(item_ids)} customer(s)? This action cannot be undone.")
-    if st.button("Yes, Delete All", type="primary", use_container_width=True):
-        conn.cursor().execute(f"DELETE FROM customers WHERE id IN ({','.join(['?']*len(item_ids))})", item_ids)
-        conn.commit(); st.success("Deleted!"); st.rerun()
+    c1, c2 = st.columns(2)
+    if c1.button("Cancel", use_container_width=True): st.rerun()
+    if c2.button("Yes, Delete All", type="primary", use_container_width=True):
+        conn_dialog = get_db()
+        cursor = conn_dialog.cursor()
+        placeholders = ",".join(["?"] * len(item_ids))
+        cursor.execute(f"DELETE FROM customers WHERE id IN ({placeholders})", item_ids)
+        conn_dialog.commit(); st.success("Deleted!"); st.rerun()
 
 # DIALOG MODAL POP-UP FOR ADDING STOCK ITEMS
 @st.dialog("➕ Add New Item to Stock")
