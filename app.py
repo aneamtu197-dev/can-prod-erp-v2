@@ -43,7 +43,7 @@ def init_custom_db():
     );
     """)
 
-    # Raw Materials & Stock Items Table
+    # Raw Materials, Buy Parts & Finished Goods Table
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS stock_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,6 +54,7 @@ def init_custom_db():
         unit_id INTEGER NOT NULL,
         warehouse_id INTEGER NOT NULL,
         purchase_price REAL DEFAULT 0.0,
+        selling_price REAL DEFAULT 0.0,
         current_stock REAL DEFAULT 0.0,
         min_stock REAL DEFAULT 0.0,
         FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE SET NULL,
@@ -88,7 +89,7 @@ init_custom_db()
 def get_db():
     return sqlite3.connect('can_prod_v2.db')
 
-# Function to Import MRPeasy CSV Into Stock (Raw Materials)
+# Function to Import MRPeasy CSV Into Stock
 def import_mrpeasy_items(df):
     conn = get_db()
     cursor = conn.cursor()
@@ -105,12 +106,14 @@ def import_mrpeasy_items(df):
         
         # Category Mapping
         group = str(row.get('group number', row.get('group name', row.get('group', '')))).upper()
-        if 'BUY' in group or 'MATERIA' in group or 'RAW' in group:
-            category = 'RAW MATERIAL'
+        if 'BUY' in group:
+            category = 'BUY PART'
         elif 'SUB' in group:
             category = 'SUBASSEMBLY'
+        elif 'FINISH' in group or 'PRODUS' in group:
+            category = 'FINISHED GOOD'
         else:
-            category = 'BUY PART'
+            category = 'RAW MATERIAL'
 
         # Unit of Measure
         u_code = str(row.get('uom', row.get('unit of measure', row.get('unit', 'pcs')))).strip()
@@ -139,6 +142,9 @@ def import_mrpeasy_items(df):
         try: price = float(row.get('cost', row.get('cost price', 0)))
         except: price = 0.0
 
+        try: sell_price = float(row.get('selling price', row.get('price', 0)))
+        except: sell_price = 0.0
+
         try: stock = float(row.get('in stock', row.get('available', row.get('stoc', 0))))
         except: stock = 0.0
 
@@ -149,15 +155,15 @@ def import_mrpeasy_items(df):
         ex = cursor.fetchone()
         if ex:
             cursor.execute("""
-                UPDATE stock_items SET name=?, category=?, unit_id=?, warehouse_id=?, purchase_price=?, current_stock=?, min_stock=?
+                UPDATE stock_items SET name=?, category=?, unit_id=?, warehouse_id=?, purchase_price=?, selling_price=?, current_stock=?, min_stock=?
                 WHERE code=?
-            """, (name, category, unit_id, warehouse_id, price, stock, min_st, code))
+            """, (name, category, unit_id, warehouse_id, price, sell_price, stock, min_st, code))
             updated_count += 1
         else:
             cursor.execute("""
-                INSERT INTO stock_items (code, name, category, unit_id, warehouse_id, purchase_price, current_stock, min_stock)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (code, name, category, unit_id, warehouse_id, price, stock, min_st))
+                INSERT INTO stock_items (code, name, category, unit_id, warehouse_id, purchase_price, selling_price, current_stock, min_stock)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (code, name, category, unit_id, warehouse_id, price, sell_price, stock, min_st))
             imported_count += 1
 
     conn.commit()
@@ -169,7 +175,7 @@ query_params = st.query_params
 active_page = query_params.get("page", "Home")
 active_subtab = query_params.get("subtab", "Raw_Materials")
 
-# 4. Aqua Minimalist Styling With 3D Big Buttons
+# 4. Aqua Minimalist Styling With 3D Big Buttons & Metric Cards
 st.markdown("""
 <style>
     .stApp { background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
@@ -189,7 +195,7 @@ st.markdown("""
     }
     .top-header h3 { margin: 0; font-size: 20px; font-weight: 800; color: #ffffff; }
 
-    /* Meniu Bar Butoane Măriți cu efect 3D */
+    /* Navigation Bar */
     .mrp-nav-bar {
         display: flex;
         background-color: #f1f5f9;
@@ -235,7 +241,7 @@ st.markdown("""
         box-shadow: 0 4px 0 #075985, 0 6px 10px rgba(2, 132, 199, 0.3) !important;
     }
 
-    /* Sub-taburi cu efect 3D */
+    /* Sub-tabs with 3D effect */
     .mrp-subtabs {
         display: flex;
         gap: 12px;
@@ -269,6 +275,45 @@ st.markdown("""
         color: #ffffff !important;
         border: 1px solid #0284c7 !important;
         box-shadow: 0 3px 0 #0369a1, 0 4px 8px rgba(14, 165, 233, 0.25) !important;
+    }
+
+    /* KPI Metric Cards */
+    .stock-kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 15px;
+        margin-bottom: 20px;
+    }
+
+    .stock-kpi-card {
+        background: #ffffff;
+        border-radius: 10px;
+        padding: 14px 18px;
+        border: 1px solid #e2e8f0;
+        border-left: 5px solid #0284c7;
+        box-shadow: 0 3px 6px rgba(0,0,0,0.04);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .stock-kpi-card-warning {
+        border-left-color: #ef4444 !important;
+        background: #fef2f2 !important;
+    }
+
+    .stock-kpi-val {
+        font-size: 22px;
+        font-weight: 800;
+        color: #0f172a;
+        margin: 0;
+    }
+
+    .stock-kpi-lbl {
+        font-size: 12px;
+        font-weight: 700;
+        color: #64748b;
+        text-transform: uppercase;
     }
 
     /* Launchpad Cards */
@@ -316,7 +361,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# 6. Main Navigation Bar with 3D Big Buttons
+# 6. Main Navigation Bar
 active_h = "mrp-nav-active" if active_page == "Home" else ""
 active_s = "mrp-nav-active" if active_page == "Stock" else ""
 active_b = "mrp-nav-active" if active_page == "BOM" else ""
@@ -346,7 +391,7 @@ if active_page == "Home":
         <a href="?page=Stock" target="_self" class="launchpad-card">
             <div class="launchpad-icon">📦</div>
             <div class="launchpad-title">Stock</div>
-            <div class="launchpad-desc">Manage Raw Materials, Buy Parts, Suppliers, Warehouses, and Units of Measure.</div>
+            <div class="launchpad-desc">Manage Raw Materials, Buy Parts, Finished Goods, Suppliers, and Warehouses.</div>
         </a>
         <a href="?page=BOM" target="_self" class="launchpad-card">
             <div class="launchpad-icon">📑</div>
@@ -367,12 +412,55 @@ if active_page == "Home":
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. STOCK MODULE (RAW MATERIALS & MANAGEMENT)
+# 2. STOCK MODULE (WITH RAW MATERIALS, BUY PARTS & FINISHED GOODS)
 # ==========================================
 elif active_page == "Stock":
     
+    # Calculate Synthetic KPIs
+    raw_count = conn.cursor().execute("SELECT COUNT(*) FROM stock_items WHERE category = 'RAW MATERIAL'").fetchone()[0]
+    buy_count = conn.cursor().execute("SELECT COUNT(*) FROM stock_items WHERE category = 'BUY PART'").fetchone()[0]
+    finished_count = conn.cursor().execute("SELECT COUNT(*) FROM stock_items WHERE category IN ('FINISHED GOOD', 'SUBASSEMBLY')").fetchone()[0]
+    low_stock_count = conn.cursor().execute("SELECT COUNT(*) FROM stock_items WHERE current_stock <= min_stock AND min_stock > 0").fetchone()[0]
+
+    # Synthetic Metric Bar
+    st.markdown(f"""
+    <div class="stock-kpi-grid">
+        <div class="stock-kpi-card">
+            <div>
+                <div class="stock-kpi-lbl">Raw Materials</div>
+                <div class="stock-kpi-val">{raw_count}</div>
+            </div>
+            <div style="font-size: 24px;">📄</div>
+        </div>
+        <div class="stock-kpi-card">
+            <div>
+                <div class="stock-kpi-lbl">Buy Parts</div>
+                <div class="stock-kpi-val">{buy_count}</div>
+            </div>
+            <div style="font-size: 24px;">⚙️</div>
+        </div>
+        <div class="stock-kpi-card">
+            <div>
+                <div class="stock-kpi-lbl">Finished Goods</div>
+                <div class="stock-kpi-val">{finished_count}</div>
+            </div>
+            <div style="font-size: 24px;">🏆</div>
+        </div>
+        <div class="stock-kpi-card {'stock-kpi-card-warning' if low_stock_count > 0 else ''}">
+            <div>
+                <div class="stock-kpi-lbl" style="{'color:#ef4444;' if low_stock_count > 0 else ''}">Reorder Alerts</div>
+                <div class="stock-kpi-val" style="{'color:#ef4444;' if low_stock_count > 0 else ''}">{low_stock_count}</div>
+            </div>
+            <div style="font-size: 24px;">⚠️</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Sub-tabs Configuration
     subtabs = [
         ("Raw_Materials", "📄 Raw Materials"),
+        ("Buy_Parts", "⚙️ Buy Parts"),
+        ("Finished_Goods", "🏆 Finished Goods"),
         ("Suppliers", "🚚 Suppliers"),
         ("Warehouses", "🏭 Warehouses"),
         ("Units", "📏 Units of Measurement")
@@ -386,18 +474,17 @@ elif active_page == "Stock":
 
     st.markdown(subtabs_html, unsafe_allow_html=True)
 
-    # --- SUBTAB 1: RAW MATERIALS ---
+    # --- TAB 1: RAW MATERIALS ---
     if active_subtab == "Raw_Materials" or active_subtab == "Items":
         c_head, c_btn1, c_btn2 = st.columns([6, 2, 2])
         with c_head:
-            st.markdown("##### Raw Materials & Purchased Parts")
+            st.markdown("##### Raw Materials Inventory")
         
         with c_btn1:
             with st.popover("➕ Add Raw Material", use_container_width=True):
-                with st.form("add_item_form"):
+                with st.form("add_raw_form"):
                     code = st.text_input("Part No. / Item Code *")
                     name = st.text_input("Part Description *")
-                    cat = st.selectbox("Category", ["RAW MATERIAL", "BUY PART", "CONSUMABLE", "SUBASSEMBLY"])
                     
                     df_s_opts = pd.read_sql_query("SELECT id, name FROM suppliers ORDER BY name", conn)
                     s_dict = {r['name']: r['id'] for _, r in df_s_opts.iterrows()}
@@ -422,10 +509,10 @@ elif active_page == "Stock":
                                 cursor.execute("""
                                     INSERT INTO stock_items 
                                     (code, name, category, supplier_id, unit_id, warehouse_id, purchase_price, current_stock, min_stock)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                """, (code.strip(), name.strip(), cat, s_dict.get(selected_s), u_dict.get(selected_u), w_dict.get(selected_w), price, stock_qty, min_stock_qty))
+                                    VALUES (?, ?, 'RAW MATERIAL', ?, ?, ?, ?, ?, ?)
+                                """, (code.strip(), name.strip(), s_dict.get(selected_s), u_dict.get(selected_u), w_dict.get(selected_w), price, stock_qty, min_stock_qty))
                                 conn.commit()
-                                st.success(f"Item {code} saved successfully!")
+                                st.success(f"Raw Material {code} saved successfully!")
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Error: {e}")
@@ -447,20 +534,13 @@ elif active_page == "Stock":
                         st.error(f"Import Error: {e}")
 
         st.write("")
-        
-        # Compact Filters
-        f1, f2 = st.columns([6, 4])
-        with f1:
-            search_code = st.text_input("🔍 Search by Part No. or Description", placeholder="Type to filter...", label_visibility="collapsed")
-        with f2:
-            search_cat = st.selectbox("Category", ["All Categories"] + ["RAW MATERIAL", "BUY PART", "CONSUMABLE", "SUBASSEMBLY"], label_visibility="collapsed")
+        search_raw = st.text_input("🔍 Search Raw Materials by Part No. or Description", placeholder="Type to filter...", label_visibility="collapsed")
 
-        query_items = """
+        q_raw = """
             SELECT 
                 si.id as ID,
                 si.code as 'Part No.',
                 si.name as 'Part Description',
-                si.category as 'Category',
                 s.name as 'Preferred Supplier',
                 u.code as 'UoM',
                 w.name as 'Warehouse',
@@ -471,20 +551,153 @@ elif active_page == "Stock":
             LEFT JOIN suppliers s ON si.supplier_id = s.id
             LEFT JOIN units u ON si.unit_id = u.id
             LEFT JOIN warehouses w ON si.warehouse_id = w.id
-            WHERE 1=1
+            WHERE si.category = 'RAW MATERIAL'
         """
-        params_items = []
-        if search_code:
-            query_items += " AND (si.code LIKE ? OR si.name LIKE ?)"
-            params_items.extend([f"%{search_code}%", f"%{search_code}%"])
-        if search_cat != "All Categories":
-            query_items += " AND si.category = ?"
-            params_items.append(search_cat)
+        params_raw = []
+        if search_raw:
+            q_raw += " AND (si.code LIKE ? OR si.name LIKE ?)"
+            params_raw.extend([f"%{search_raw}%", f"%{search_raw}%"])
 
-        df_items = pd.read_sql_query(query_items, conn, params=params_items)
-        st.dataframe(df_items, use_container_width=True, hide_index=True)
+        df_raw = pd.read_sql_query(q_raw, conn, params=params_raw)
+        st.dataframe(df_raw, use_container_width=True, hide_index=True)
 
-    # --- SUBTAB 2: SUPPLIERS ---
+    # --- TAB 2: BUY PARTS ---
+    elif active_subtab == "Buy_Parts":
+        c_head, c_btn1 = st.columns([8, 2])
+        with c_head:
+            st.markdown("##### Purchased Parts (Buy Parts)")
+        
+        with c_btn1:
+            with st.popover("➕ Add Buy Part", use_container_width=True):
+                with st.form("add_buy_form"):
+                    code = st.text_input("Part No. / Item Code *")
+                    name = st.text_input("Part Description *")
+                    
+                    df_s_opts = pd.read_sql_query("SELECT id, name FROM suppliers ORDER BY name", conn)
+                    s_dict = {r['name']: r['id'] for _, r in df_s_opts.iterrows()}
+                    selected_s = st.selectbox("Preferred Supplier", list(s_dict.keys()) if s_dict else ["No Supplier"])
+                    
+                    df_u_opts = pd.read_sql_query("SELECT id, code, name FROM units ORDER BY code", conn)
+                    u_dict = {f"{r['code']} ({r['name']})": r['id'] for _, r in df_u_opts.iterrows()}
+                    selected_u = st.selectbox("Unit of Measure", list(u_dict.keys()))
+
+                    df_w_opts = pd.read_sql_query("SELECT id, name FROM warehouses ORDER BY name", conn)
+                    w_dict = {r['name']: r['id'] for _, r in df_w_opts.iterrows()}
+                    selected_w = st.selectbox("Initial Warehouse", list(w_dict.keys()))
+
+                    price = st.number_input("Purchase Price (€)", min_value=0.0, value=0.0, step=0.5)
+                    stock_qty = st.number_input("Current Stock Quantity", min_value=0.0, value=0.0)
+                    min_stock_qty = st.number_input("Reorder Point / Min. Stock", min_value=0.0, value=0.0)
+
+                    if st.form_submit_button("💾 Save Buy Part"):
+                        if code and name:
+                            try:
+                                cursor = conn.cursor()
+                                cursor.execute("""
+                                    INSERT INTO stock_items 
+                                    (code, name, category, supplier_id, unit_id, warehouse_id, purchase_price, current_stock, min_stock)
+                                    VALUES (?, ?, 'BUY PART', ?, ?, ?, ?, ?, ?)
+                                """, (code.strip(), name.strip(), s_dict.get(selected_s), u_dict.get(selected_u), w_dict.get(selected_w), price, stock_qty, min_stock_qty))
+                                conn.commit()
+                                st.success(f"Buy Part {code} saved successfully!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+
+        st.write("")
+        search_buy = st.text_input("🔍 Search Buy Parts", placeholder="Type to filter...", label_visibility="collapsed")
+
+        q_buy = """
+            SELECT 
+                si.id as ID,
+                si.code as 'Part No.',
+                si.name as 'Part Description',
+                s.name as 'Preferred Supplier',
+                u.code as 'UoM',
+                w.name as 'Warehouse',
+                si.purchase_price as 'Purchase Price (€)',
+                si.current_stock as 'In Stock',
+                si.min_stock as 'Reorder Point'
+            FROM stock_items si
+            LEFT JOIN suppliers s ON si.supplier_id = s.id
+            LEFT JOIN units u ON si.unit_id = u.id
+            LEFT JOIN warehouses w ON si.warehouse_id = w.id
+            WHERE si.category = 'BUY PART'
+        """
+        params_buy = []
+        if search_buy:
+            q_buy += " AND (si.code LIKE ? OR si.name LIKE ?)"
+            params_buy.extend([f"%{search_buy}%", f"%{search_buy}%"])
+
+        df_buy = pd.read_sql_query(q_buy, conn, params=params_buy)
+        st.dataframe(df_buy, use_container_width=True, hide_index=True)
+
+    # --- TAB 3: FINISHED GOODS ---
+    elif active_subtab == "Finished_Goods":
+        c_head, c_btn1 = st.columns([8, 2])
+        with c_head:
+            st.markdown("##### Finished Goods & Subassemblies")
+        
+        with c_btn1:
+            with st.popover("➕ Add Finished Good", use_container_width=True):
+                with st.form("add_finished_form"):
+                    code = st.text_input("Product Code / Part No. *")
+                    name = st.text_input("Product Description *")
+                    cat = st.selectbox("Category", ["FINISHED GOOD", "SUBASSEMBLY"])
+                    
+                    df_u_opts = pd.read_sql_query("SELECT id, code, name FROM units ORDER BY code", conn)
+                    u_dict = {f"{r['code']} ({r['name']})": r['id'] for _, r in df_u_opts.iterrows()}
+                    selected_u = st.selectbox("Unit of Measure", list(u_dict.keys()))
+
+                    df_w_opts = pd.read_sql_query("SELECT id, name FROM warehouses ORDER BY name", conn)
+                    w_dict = {r['name']: r['id'] for _, r in df_w_opts.iterrows()}
+                    selected_w = st.selectbox("Storage Warehouse", list(w_dict.keys()))
+
+                    sell_price = st.number_input("Selling Price (€)", min_value=0.0, value=0.0, step=0.5)
+                    stock_qty = st.number_input("In Stock Quantity", min_value=0.0, value=0.0)
+
+                    if st.form_submit_button("💾 Save Finished Good"):
+                        if code and name:
+                            try:
+                                cursor = conn.cursor()
+                                cursor.execute("""
+                                    INSERT INTO stock_items 
+                                    (code, name, category, unit_id, warehouse_id, selling_price, current_stock)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                                """, (code.strip(), name.strip(), cat, u_dict.get(selected_u), w_dict.get(selected_w), sell_price, stock_qty))
+                                conn.commit()
+                                st.success(f"Product {code} saved successfully!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+
+        st.write("")
+        search_fin = st.text_input("🔍 Search Finished Goods", placeholder="Type to filter...", label_visibility="collapsed")
+
+        q_fin = """
+            SELECT 
+                si.id as ID,
+                si.code as 'Product Code',
+                si.name as 'Product Description',
+                si.category as 'Category',
+                u.code as 'UoM',
+                w.name as 'Warehouse',
+                si.selling_price as 'Selling Price (€)',
+                si.current_stock as 'In Stock'
+            FROM stock_items si
+            LEFT JOIN units u ON si.unit_id = u.id
+            LEFT JOIN warehouses w ON si.warehouse_id = w.id
+            WHERE si.category IN ('FINISHED GOOD', 'SUBASSEMBLY')
+        """
+        params_fin = []
+        if search_fin:
+            q_fin += " AND (si.code LIKE ? OR si.name LIKE ?)"
+            params_fin.extend([f"%{search_fin}%", f"%{search_fin}%"])
+
+        df_fin = pd.read_sql_query(q_fin, conn, params=params_fin)
+        st.dataframe(df_fin, use_container_width=True, hide_index=True)
+
+    # --- TAB 4: SUPPLIERS ---
     elif active_subtab == "Suppliers":
         s_head, s_btn = st.columns([8, 2])
         with s_head:
@@ -508,7 +721,7 @@ elif active_page == "Stock":
         df_s = pd.read_sql_query("SELECT code as Code, name as 'Supplier Name', contact_person as 'Contact Person', phone as Phone, email as Email, lead_time_days as 'Lead Time (Days)' FROM suppliers ORDER BY name", conn)
         st.dataframe(df_s, use_container_width=True, hide_index=True)
 
-    # --- SUBTAB 3: WAREHOUSES ---
+    # --- TAB 5: WAREHOUSES ---
     elif active_subtab == "Warehouses":
         w_head, w_btn = st.columns([8, 2])
         with w_head:
@@ -527,7 +740,7 @@ elif active_page == "Stock":
         df_w = pd.read_sql_query("SELECT code as Code, name as 'Warehouse / Location Name', location_type as 'Type' FROM warehouses ORDER BY name", conn)
         st.dataframe(df_w, use_container_width=True, hide_index=True)
 
-    # --- SUBTAB 4: UNITS OF MEASUREMENT ---
+    # --- TAB 6: UNITS ---
     elif active_subtab == "Units":
         u_head, u_btn = st.columns([8, 2])
         with u_head:
