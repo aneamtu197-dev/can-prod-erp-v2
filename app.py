@@ -483,7 +483,7 @@ def edit_facility_dialog(fac_id):
             if c_del.form_submit_button("🗑️ Delete", use_container_width=True):
                 cursor.execute("DELETE FROM production_facilities WHERE id = ?", (fac_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
 
-# DIALOG MODALS FOR OPERATIONS
+# DIALOG MODALS FOR OPERATIONS (WITH OUTSOURCING SUPPORT)
 @st.dialog("➕ Add Manufacturing Operation")
 def add_operation_dialog():
     conn_dialog = get_db()
@@ -493,34 +493,46 @@ def add_operation_dialog():
     fac_dict = {f"{r['name']} ({r['facility_type']})": r['id'] for _, r in df_fac.iterrows()}
     fac_options = ["No Equipment Assigned"] + list(fac_dict.keys())
 
-    # Session State for Dynamic Capacity Calculation
-    if "op_ops" not in st.session_state: st.session_state["op_ops"] = 1
-    if "op_hrs_per_op" not in st.session_state: st.session_state["op_hrs_per_op"] = 8.0
+    df_supp = pd.read_sql_query("SELECT id, name FROM suppliers ORDER BY name", conn_dialog)
+    supp_dict = {r['name']: r['id'] for _, r in df_supp.iterrows()}
+    supp_options = ["No Preferred Supplier"] + list(supp_dict.keys())
 
     st.subheader("Operation Characteristics")
+    
+    # Outsourcing Toggle
+    is_outsourced = st.toggle("🚚 Is Subcontracted / Outsourced Operation?", value=False)
+    
     col1, col2 = st.columns(2)
     with col1:
         op_uniq = st.text_input("Operation Uniq Code (Auto-Generated) *", value=auto_op_code, disabled=True)
-        op_name = st.text_input("Operation Name *", placeholder="e.g. Debitare laser teava")
-        selected_fac = st.selectbox("Assigned Facility / Equipment", fac_options)
-        cost_unit = st.selectbox("Billing / Cost Unit *", ["Hour", "Sqm (m2)", "Pcs", "Meter"])
-        rate_unit = st.number_input("Rate per Unit (€) *", min_value=0.0, value=25.0, step=1.0)
+        op_name = st.text_input("Operation Name *", placeholder="e.g. Zincare termica sau Debitare laser teava")
         
+        if not is_outsourced:
+            selected_fac = st.selectbox("Assigned Facility / Equipment", fac_options)
+            cost_unit = st.selectbox("Billing / Cost Unit *", ["Hour", "Sqm (m2)", "Pcs", "Meter"])
+            rate_unit = st.number_input("Rate per Unit (€) *", min_value=0.0, value=25.0, step=1.0)
+        else:
+            selected_supp = st.selectbox("Preferred Outsourcing Supplier", supp_options)
+            out_type = st.selectbox("Outsourcing Process Type *", ["Zincare Termica / Galvanizare", "Vopsire in Camp Electrostatic", "Strunjire CNC", "Frezare CNC", "Indoire / Bending", "Tratament Termic", "Debitare Externă", "General Subcontracting"])
+            
     with col2:
-        prod_level = st.number_input("Productivity Level (1.0 = 100%, 0.9 = 90%) *", min_value=0.1, max_value=2.0, value=1.0, step=0.05)
-        
-        ops_val = st.number_input("Number of Operators *", min_value=1, value=st.session_state["op_ops"], key="input_ops")
-        hrs_per_op_val = st.number_input("Hours / Day per Operator *", min_value=1.0, max_value=24.0, value=st.session_state["op_hrs_per_op"], step=0.5, key="input_hrs_per_op")
-        
-        # Dynamic Calculations
-        calc_day = float(ops_val * hrs_per_op_val)
-        calc_week = float(calc_day * 5.0)
-        calc_month = float(calc_week * 4.0)
+        if not is_outsourced:
+            prod_level = st.number_input("Productivity Level (1.0 = 100%, 0.9 = 90%) *", min_value=0.1, max_value=2.0, value=1.0, step=0.05)
+            ops_val = st.number_input("Number of Operators *", min_value=1, value=1)
+            hrs_per_op_val = st.number_input("Hours / Day per Operator *", min_value=1.0, max_value=24.0, value=8.0, step=0.5)
+            
+            calc_day = float(ops_val * hrs_per_op_val)
+            calc_week = float(calc_day * 5.0)
+            calc_month = float(calc_week * 4.0)
 
-        st.markdown("##### Max Capacity Limits (Auto-Calculated)")
-        max_day = st.number_input("Max Hours / Day (Total Workshop)", min_value=0.0, value=calc_day, step=0.5)
-        max_week = st.number_input("Max Hours / Week", min_value=0.0, value=calc_week, step=1.0)
-        max_month = st.number_input("Max Hours / Month", min_value=0.0, value=calc_month, step=5.0)
+            st.markdown("##### Max Capacity Limits (Auto-Calculated)")
+            max_day = st.number_input("Max Hours / Day (Total Workshop)", min_value=0.0, value=calc_day, step=0.5)
+            max_week = st.number_input("Max Hours / Week", min_value=0.0, value=calc_week, step=1.0)
+            max_month = st.number_input("Max Hours / Month", min_value=0.0, value=calc_month, step=5.0)
+        else:
+            cost_unit = st.selectbox("Billing Unit *", ["Pcs (per Bucată)", "Sqm (m2)", "Project / Lot", "kg"])
+            rate_unit = st.number_input("Estimated Price / Unit (€) *", min_value=0.0, value=5.0, step=0.5)
+            mat_supplied = st.radio("Material Provision *", ["CAN PROD (Material Asigurat de Noi)", "Supplier (Material Asigurat de Furnizor)"])
 
     st.divider()
     c_btn_save, c_btn_cancel = st.columns([8, 2])
@@ -531,11 +543,20 @@ def add_operation_dialog():
             if cursor.fetchone():
                 st.warning(f"⚠️ An operation with the name '{op_name.strip()}' already exists!")
             else:
-                fac_id = fac_dict.get(selected_fac) if selected_fac != "No Equipment Assigned" else None
-                cursor.execute("""
-                    INSERT INTO operations (uniq_code, name, cost_unit, rate_per_unit, productivity_level, hours_per_operator, max_hours_day, max_hours_week, max_hours_month, operators_count, facility_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (auto_op_code, op_name.strip(), cost_unit, rate_unit, prod_level, hrs_per_op_val, max_day, max_week, max_month, ops_val, fac_id))
+                if not is_outsourced:
+                    fac_id = fac_dict.get(selected_fac) if selected_fac != "No Equipment Assigned" else None
+                    cursor.execute("""
+                        INSERT INTO operations (uniq_code, name, cost_unit, rate_per_unit, productivity_level, hours_per_operator, max_hours_day, max_hours_week, max_hours_month, operators_count, facility_id, is_outsourced)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                    """, (auto_op_code, op_name.strip(), cost_unit, rate_unit, prod_level, hrs_per_op_val, max_day, max_week, max_month, ops_val, fac_id))
+                else:
+                    supp_id = supp_dict.get(selected_supp) if selected_supp != "No Preferred Supplier" else None
+                    mat_val = "CAN PROD" if "CAN PROD" in mat_supplied else "Supplier"
+                    cursor.execute("""
+                        INSERT INTO operations (uniq_code, name, cost_unit, rate_per_unit, is_outsourced, preferred_supplier_id, outsourcing_type, material_supplied_by)
+                        VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+                    """, (auto_op_code, op_name.strip(), cost_unit, rate_unit, supp_id, out_type, mat_val))
+                
                 conn_dialog.commit(); st.success("Operation saved!"); st.rerun()
         else:
             st.warning("Please fill in Operation Name!")
@@ -544,50 +565,85 @@ def add_operation_dialog():
 def edit_operation_dialog(op_id):
     conn_dialog = get_db()
     cursor = conn_dialog.cursor()
-    cursor.execute("SELECT uniq_code, name, cost_unit, rate_per_unit, productivity_level, max_hours_day, max_hours_week, max_hours_month, operators_count, facility_id, hours_per_operator FROM operations WHERE id = ?", (op_id,))
+    cursor.execute("SELECT uniq_code, name, cost_unit, rate_per_unit, productivity_level, max_hours_day, max_hours_week, max_hours_month, operators_count, facility_id, hours_per_operator, is_outsourced, preferred_supplier_id, outsourcing_type, material_supplied_by FROM operations WHERE id = ?", (op_id,))
     row = cursor.fetchone()
     
     if row:
+        is_outsourced_curr = bool(row[11])
         df_fac = pd.read_sql_query("SELECT id, name, facility_type FROM production_facilities ORDER BY name", conn_dialog)
         fac_dict = {f"{r['name']} ({r['facility_type']})": r['id'] for _, r in df_fac.iterrows()}
         fac_options = ["No Equipment Assigned"] + list(fac_dict.keys())
         
+        df_supp = pd.read_sql_query("SELECT id, name FROM suppliers ORDER BY name", conn_dialog)
+        supp_dict = {r['name']: r['id'] for _, r in df_supp.iterrows()}
+        supp_options = ["No Preferred Supplier"] + list(supp_dict.keys())
+
         curr_fac_name = "No Equipment Assigned"
         if row[9]:
             curr_f = [k for k, v in fac_dict.items() if v == row[9]]
             if curr_f: curr_fac_name = curr_f[0]
 
-        curr_hrs_per_op = safe_float(row[10]) if len(row) > 10 and row[10] else 8.0
+        curr_supp_name = "No Preferred Supplier"
+        if row[12]:
+            curr_s = [k for k, v in supp_dict.items() if v == row[12]]
+            if curr_s: curr_supp_name = curr_s[0]
+
+        st.subheader("Edit Operation Characteristics")
+        is_outsourced = st.toggle("🚚 Is Subcontracted / Outsourced Operation?", value=is_outsourced_curr)
 
         col1, col2 = st.columns(2)
         with col1:
             st.text_input("Operation Uniq Code (Read-Only) *", value=row[0], disabled=True)
             e_name = st.text_input("Operation Name *", value=row[1])
-            e_fac = st.selectbox("Assigned Facility / Equipment", fac_options, index=fac_options.index(curr_fac_name) if curr_fac_name in fac_options else 0)
-            units_list = ["Hour", "Sqm (m2)", "Pcs", "Meter"]
-            e_unit = st.selectbox("Billing / Cost Unit *", units_list, index=units_list.index(row[2]) if row[2] in units_list else 0)
-            e_rate = st.number_input("Rate per Unit (€) *", min_value=0.0, value=safe_float(row[3]))
-        with col2:
-            e_prod = st.number_input("Productivity Level *", min_value=0.1, max_value=2.0, value=safe_float(row[4]))
-            e_ops = st.number_input("Number of Operators *", min_value=1, value=int(row[8]))
-            e_hrs_per_op = st.number_input("Hours / Day per Operator *", min_value=1.0, max_value=24.0, value=curr_hrs_per_op, step=0.5)
             
-            calc_day = float(e_ops * e_hrs_per_op)
-            calc_week = float(calc_day * 5.0)
-            calc_month = float(calc_week * 4.0)
+            if not is_outsourced:
+                e_fac = st.selectbox("Assigned Facility / Equipment", fac_options, index=fac_options.index(curr_fac_name) if curr_fac_name in fac_options else 0)
+                units_list = ["Hour", "Sqm (m2)", "Pcs", "Meter"]
+                e_unit = st.selectbox("Billing / Cost Unit *", units_list, index=units_list.index(row[2]) if row[2] in units_list else 0)
+                e_rate = st.number_input("Rate per Unit (€) *", min_value=0.0, value=safe_float(row[3]))
+            else:
+                e_supp = st.selectbox("Preferred Outsourcing Supplier", supp_options, index=supp_options.index(curr_supp_name) if curr_supp_name in supp_options else 0)
+                out_opts = ["Zincare Termica / Galvanizare", "Vopsire in Camp Electrostatic", "Strunjire CNC", "Frezare CNC", "Indoire / Bending", "Tratament Termic", "Debitare Externă", "General Subcontracting"]
+                e_out_type = st.selectbox("Outsourcing Process Type *", out_opts, index=out_opts.index(row[13]) if row[13] in out_opts else 0)
 
-            st.markdown("##### Max Capacity Limits")
-            e_mday = st.number_input("Max Hours / Day (Total Workshop)", min_value=0.0, value=calc_day)
-            e_mweek = st.number_input("Max Hours / Week", min_value=0.0, value=calc_week)
-            e_mmonth = st.number_input("Max Hours / Month", min_value=0.0, value=calc_month)
+        with col2:
+            if not is_outsourced:
+                e_prod = st.number_input("Productivity Level *", min_value=0.1, max_value=2.0, value=safe_float(row[4]))
+                e_ops = st.number_input("Number of Operators *", min_value=1, value=int(row[8]) if row[8] else 1)
+                e_hrs_per_op = st.number_input("Hours / Day per Operator *", min_value=1.0, max_value=24.0, value=safe_float(row[10]) if row[10] else 8.0, step=0.5)
+                
+                calc_day = float(e_ops * e_hrs_per_op)
+                calc_week = float(calc_day * 5.0)
+                calc_month = float(calc_week * 4.0)
+
+                st.markdown("##### Max Capacity Limits")
+                e_mday = st.number_input("Max Hours / Day (Total Workshop)", min_value=0.0, value=calc_day)
+                e_mweek = st.number_input("Max Hours / Week", min_value=0.0, value=calc_week)
+                e_mmonth = st.number_input("Max Hours / Month", min_value=0.0, value=calc_month)
+            else:
+                out_units = ["Pcs (per Bucată)", "Sqm (m2)", "Project / Lot", "kg"]
+                e_unit = st.selectbox("Billing Unit *", out_units, index=out_units.index(row[2]) if row[2] in out_units else 0)
+                e_rate = st.number_input("Estimated Price / Unit (€) *", min_value=0.0, value=safe_float(row[3]))
+                mat_opts = ["CAN PROD (Material Asigurat de Noi)", "Supplier (Material Asigurat de Furnizor)"]
+                curr_mat_idx = 0 if row[14] == "CAN PROD" else 1
+                e_mat_supplied = st.radio("Material Provision *", mat_opts, index=curr_mat_idx)
 
         c_save, c_del = st.columns([8, 2])
         if c_save.button("💾 Save Changes", type="primary", use_container_width=True):
-            fac_id = fac_dict.get(e_fac) if e_fac != "No Equipment Assigned" else None
-            cursor.execute("""
-                UPDATE operations SET name=?, cost_unit=?, rate_per_unit=?, productivity_level=?, hours_per_operator=?, max_hours_day=?, max_hours_week=?, max_hours_month=?, operators_count=?, facility_id=?
-                WHERE id=?
-            """, (e_name.strip(), e_unit, e_rate, e_prod, e_hrs_per_op, e_mday, e_mweek, e_mmonth, e_ops, fac_id, op_id))
+            if not is_outsourced:
+                fac_id = fac_dict.get(e_fac) if e_fac != "No Equipment Assigned" else None
+                cursor.execute("""
+                    UPDATE operations SET name=?, cost_unit=?, rate_per_unit=?, productivity_level=?, hours_per_operator=?, max_hours_day=?, max_hours_week=?, max_hours_month=?, operators_count=?, facility_id=?, is_outsourced=0
+                    WHERE id=?
+                """, (e_name.strip(), e_unit, e_rate, e_prod, e_hrs_per_op, e_mday, e_mweek, e_mmonth, e_ops, fac_id, op_id))
+            else:
+                supp_id = supp_dict.get(e_supp) if e_supp != "No Preferred Supplier" else None
+                mat_val = "CAN PROD" if "CAN PROD" in e_mat_supplied else "Supplier"
+                cursor.execute("""
+                    UPDATE operations SET name=?, cost_unit=?, rate_per_unit=?, is_outsourced=1, preferred_supplier_id=?, outsourcing_type=?, material_supplied_by=?
+                    WHERE id=?
+                """, (e_name.strip(), e_unit, e_rate, supp_id, e_out_type, mat_val, op_id))
+
             conn_dialog.commit(); st.success("Updated!"); st.rerun()
         if c_del.button("🗑️ Delete", use_container_width=True):
             cursor.execute("DELETE FROM operations WHERE id = ?", (op_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
@@ -754,7 +810,7 @@ elif active_page == "BOM":
     active_subtab_bom = query_params.get("subtab", "Operations")
     
     subtabs_bom_html = '<div class="mrp-subtabs">'
-    for t_k, t_l in [("Operations", "⚙️ Operations"), ("Facilities", "🏢 Production Facilities"), ("BOM_Recipes", "📑 BOM Recipes"), ("Routing", "🔀 Routing")]:
+    for t_k, t_l in [("Operations", "⚙️ Operations"), ("Facilities", "🏢 Production Facilities"), ("Outsourcing", "🚚 Subcontracting"), ("BOM_Recipes", "📑 BOM Recipes"), ("Routing", "🔀 Routing")]:
         subtabs_bom_html += f'<a href="?page=BOM&subtab={t_k}" target="_self" class="{"mrp-subtab-active" if active_subtab_bom == t_k else "mrp-subtab"}">{t_l}</a>'
     st.markdown(subtabs_bom_html + '</div>', unsafe_allow_html=True)
     
@@ -771,14 +827,18 @@ elif active_page == "BOM":
                 o.id as ID,
                 o.uniq_code as 'Uniq Code',
                 o.name as 'Operation Name',
-                f.name as 'Assigned Equipment',
+                CASE 
+                    WHEN o.is_outsourced = 1 THEN '🚚 OUTSOURCED (' || COALESCE(s.name, 'No Supplier') || ')'
+                    ELSE COALESCE(f.name, 'Internal Machine')
+                END as 'Execution Facility / Supplier',
                 o.cost_unit as 'Cost Unit',
                 o.rate_per_unit as 'Rate (€)',
-                o.productivity_level as 'Productivity',
-                o.operators_count as 'Operators',
-                o.max_hours_day as 'Max Hrs/Day'
+                CASE WHEN o.is_outsourced = 1 THEN '-' ELSE CAST(o.productivity_level AS TEXT) END as 'Productivity',
+                CASE WHEN o.is_outsourced = 1 THEN '-' ELSE CAST(o.operators_count AS TEXT) END as 'Operators',
+                CASE WHEN o.is_outsourced = 1 THEN '-' ELSE CAST(o.max_hours_day AS TEXT) END as 'Max Hrs/Day'
             FROM operations o
             LEFT JOIN production_facilities f ON o.facility_id = f.id
+            LEFT JOIN suppliers s ON o.preferred_supplier_id = s.id
             ORDER BY o.uniq_code
         """
         df_op = pd.read_sql_query(q_op, conn)
@@ -786,8 +846,7 @@ elif active_page == "BOM":
             df_op, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_op",
             column_config={
                 "ID": None,
-                "Rate (€)": st.column_config.NumberColumn("Rate (€)", format="%.2f €"),
-                "Productivity": st.column_config.NumberColumn("Productivity", format="%.2f")
+                "Rate (€)": st.column_config.NumberColumn("Rate (€)", format="%.2f €")
             }
         )
         
@@ -823,6 +882,31 @@ elif active_page == "BOM":
                         if st.button("✏️ Edit Selected", use_container_width=True): edit_facility_dialog(selected_ids[0])
                 with col_a2:
                     if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_facilities_dialog(selected_ids)
+
+    # --- SUBCONTRACTING / OUTSOURCING SUBTAB ---
+    elif active_subtab_bom == "Outsourcing":
+        st.markdown("##### 🚚 Subcontracting Management (Outsourced Operations)")
+        st.caption("Centralizator al operațiunilor externe și comenzi către furnizorii de servicii (zincare, vopsire, strunjire, etc.).")
+        
+        q_sub = """
+            SELECT 
+                o.uniq_code as 'Op Code',
+                o.name as 'Operation Name',
+                COALESCE(s.name, 'No Preferred Supplier') as 'Subcontractor / Supplier',
+                o.outsourcing_type as 'Process Type',
+                o.material_supplied_by as 'Material Provision',
+                o.cost_unit as 'Billing Unit',
+                o.rate_per_unit as 'Estimated Rate (€)'
+            FROM operations o
+            LEFT JOIN suppliers s ON o.preferred_supplier_id = s.id
+            WHERE o.is_outsourced = 1
+            ORDER BY o.uniq_code
+        """
+        df_sub = pd.read_sql_query(q_sub, conn)
+        if len(df_sub) > 0:
+            st.dataframe(df_sub, use_container_width=True, hide_index=True, column_config={"Estimated Rate (€)": st.column_config.NumberColumn("Estimated Rate (€)", format="%.2f €")})
+        else:
+            st.info("No outsourced operations created yet. Toggle 'Is Subcontracted / Outsourced Operation?' when adding an Operation.")
 
     elif active_subtab_bom == "BOM_Recipes":
         st.info("BOM Recipes module will be configured next.")
