@@ -3,7 +3,8 @@ import pandas as pd
 import re
 
 def init_custom_db():
-    conn = sqlite3.connect('can_prod_v2.db')
+    # Permitem accesul Multi-Thread pentru a rezolva eroarea din Pop-Up-uri (st.dialog)
+    conn = sqlite3.connect('can_prod_v2.db', check_same_thread=False)
     cursor = conn.cursor()
     
     cursor.execute("""
@@ -127,7 +128,8 @@ def populate_missing_uniq_codes(conn):
     conn.commit()
 
 def get_db():
-    return sqlite3.connect('can_prod_v2.db')
+    # Permitem accesul Multi-Thread aici de asemenea
+    return sqlite3.connect('can_prod_v2.db', check_same_thread=False)
 
 def generate_unique_item_code(conn, category, sub_group=""):
     cursor = conn.cursor()
