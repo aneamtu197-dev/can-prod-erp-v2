@@ -16,6 +16,21 @@ st.set_page_config(page_title="CAN Prod ERP Custom", layout="wide", initial_side
 init_custom_db()
 load_css()
 
+# Inject Custom CSS for Draggable/Resizable Dialog Modals
+st.markdown("""
+<style>
+    div[data-testid="stDialog"] > div {
+        resize: both !important;
+        overflow: auto !important;
+        min-width: 600px !important;
+        min-height: 400px !important;
+    }
+    div[data-testid="stDialog"] > div > div:first-child {
+        cursor: move;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 query_params = st.query_params
 active_page = query_params.get("page", "Home")
 active_subtab = query_params.get("subtab", "Product")
@@ -682,11 +697,9 @@ def manage_product_bom_dialog(selected_prod_id=None):
                 edit_m_cost = cm3.number_input("Unit Price (€)", min_value=0.0, value=float(r_m['Price']), step=0.1, key=f"edit_mcost_{r_m['ID']}")
                 new_tot_m = float(edit_m_qty * edit_m_cost)
                 
-                # Perfect Alignment for Total (€) Column
                 cm4.caption("Total (€)")
                 cm4.write(f"**{new_tot_m:.2f} €**")
                 
-                # Perfect Alignment for Action Buttons
                 cm5.caption("Action")
                 c_save_m, c_del_m = cm5.columns(2)
                 selected_m_id = mat_dict[edit_m_key]
@@ -760,7 +773,6 @@ def manage_product_bom_dialog(selected_prod_id=None):
                 edit_o_rate = co_rate.number_input("Rate (€)", min_value=0.0, value=float(r_o['Rate']), step=0.5, key=f"edit_orate_{r_o['ID']}")
                 new_tot_o = float(edit_o_dur * edit_o_rate)
                 
-                # Perfect Alignment for Total (€) Column
                 co_tot.caption("Total (€)")
                 co_tot.write(f"**{new_tot_o:.2f} €**")
                 
@@ -807,7 +819,7 @@ def manage_product_bom_dialog(selected_prod_id=None):
         
         col_o1, col_o2, col_o3 = st.columns([5, 3, 2])
         add_op_key = col_o1.selectbox("Select Operation Step", op_options, index=0, key=f"sel_bom_op_v_{ver_o}")
-        add_op_dur = col_o2.number_input("Est. Duration / Qty (Hours/Pcs/m2)", min_value=0.01, value=0.5, step=0.1, key=f"num_bom_op_dur_v_{ver_o}")
+        add_op_dur = col_o2.number_input("Est. Duration / Qty (Hours/Min/Pcs/m2)", min_value=0.01, value=0.5, step=0.1, key=f"num_bom_op_dur_v_{ver_o}")
         
         col_o3.write(""); col_o3.write("")
         if col_o3.button("➕ Add Operation Step", key="btn_add_op", use_container_width=True):
@@ -927,7 +939,7 @@ def edit_facility_dialog(fac_id):
             if c_del.form_submit_button("🗑️ Delete", use_container_width=True):
                 cursor.execute("DELETE FROM production_facilities WHERE id = ?", (fac_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
 
-# DIALOG MODALS FOR OPERATIONS
+# DIALOG MODALS FOR OPERATIONS (WITH MINUTES ADDED AS COST UNIT)
 @st.dialog("➕ Add Manufacturing Operation")
 def add_operation_dialog():
     conn_dialog = get_db()
@@ -951,7 +963,7 @@ def add_operation_dialog():
         
         if not is_outsourced:
             selected_fac = st.selectbox("Assigned Facility / Equipment", fac_options)
-            cost_unit = st.selectbox("Billing / Cost Unit *", ["Hour", "Sqm (m2)", "Pcs", "Meter"])
+            cost_unit = st.selectbox("Billing / Cost Unit *", ["Hour", "Minutes", "Sqm (m2)", "Pcs", "Meter"])
             rate_unit = st.number_input("Rate per Unit (€) *", min_value=0.0, value=25.0, step=1.0)
         else:
             selected_supp = st.selectbox("Preferred Outsourcing Supplier", supp_options)
@@ -972,7 +984,7 @@ def add_operation_dialog():
             max_week = st.number_input("Max Hours / Week", min_value=0.0, value=calc_week, step=1.0)
             max_month = st.number_input("Max Hours / Month", min_value=0.0, value=calc_month, step=5.0)
         else:
-            cost_unit = st.selectbox("Billing Unit *", ["Pcs (per Bucată)", "Sqm (m2)", "Project / Lot", "kg"])
+            cost_unit = st.selectbox("Billing Unit *", ["Pcs (per Bucată)", "Minutes", "Sqm (m2)", "Project / Lot", "kg"])
             rate_unit = st.number_input("Estimated Price / Unit (€) *", min_value=0.0, value=5.0, step=0.5)
             mat_supplied = st.radio("Material Provision *", ["CAN PROD (Material Asigurat de Noi)", "Supplier (Material Asigurat de Furnizor)"])
 
@@ -1040,7 +1052,7 @@ def edit_operation_dialog(op_id):
             
             if not is_outsourced:
                 e_fac = st.selectbox("Assigned Facility / Equipment", fac_options, index=fac_options.index(curr_fac_name) if curr_fac_name in fac_options else 0)
-                units_list = ["Hour", "Sqm (m2)", "Pcs", "Meter"]
+                units_list = ["Hour", "Minutes", "Sqm (m2)", "Pcs", "Meter"]
                 e_unit = st.selectbox("Billing / Cost Unit *", units_list, index=units_list.index(row[2]) if row[2] in units_list else 0)
                 e_rate = st.number_input("Rate per Unit (€) *", min_value=0.0, value=safe_float(row[3]))
             else:
@@ -1063,7 +1075,7 @@ def edit_operation_dialog(op_id):
                 e_mweek = st.number_input("Max Hours / Week", min_value=0.0, value=calc_week)
                 e_mmonth = st.number_input("Max Hours / Month", min_value=0.0, value=calc_month)
             else:
-                out_units = ["Pcs (per Bucată)", "Sqm (m2)", "Project / Lot", "kg"]
+                out_units = ["Pcs (per Bucată)", "Minutes", "Sqm (m2)", "Project / Lot", "kg"]
                 e_unit = st.selectbox("Billing Unit *", out_units, index=out_units.index(row[2]) if row[2] in out_units else 0)
                 e_rate = st.number_input("Estimated Price / Unit (€) *", min_value=0.0, value=safe_float(row[3]))
                 mat_opts = ["CAN PROD (Material Asigurat de Noi)", "Supplier (Material Asigurat de Furnizor)"]
