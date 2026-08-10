@@ -774,6 +774,16 @@ def manage_product_bom_dialog(selected_prod_id=None):
     curr_c_name = [k for k, v in cust_dict.items() if v == curr_c_id]
     sel_cust_name = st.selectbox("Assigned Customer *", c_keys, index=c_keys.index(curr_c_name[0]) if curr_c_name else 0)
 
+    # Clean duplicates in product_boms to avoid OperationalError / multiple rows
+    cursor.execute("SELECT id FROM product_boms WHERE product_item_id = ? ORDER BY id ASC", (target_prod_id,))
+    bom_rows_all = cursor.fetchall()
+    if len(bom_rows_all) > 1:
+        keep_id = bom_rows_all[-1][0] # Keep latest
+        dup_ids = [r[0] for r in bom_rows_all[:-1]]
+        placeholders_d = ",".join(["?"] * len(dup_ids))
+        cursor.execute(f"DELETE FROM product_boms WHERE id IN ({placeholders_d})", dup_ids)
+        conn_dialog.commit()
+
     # Defensive DB Check for markup_percent column
     try:
         cursor.execute("SELECT id, total_material_cost, total_labor_cost, total_production_cost, markup_percent FROM product_boms WHERE product_item_id = ?", (target_prod_id,))
@@ -1096,7 +1106,7 @@ def edit_facility_dialog(fac_id):
             if c_del.form_submit_button("🗑️ Delete", use_container_width=True):
                 cursor.execute("DELETE FROM production_facilities WHERE id = ?", (fac_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
 
-# DIALOG MODALS FOR OPERATIONS
+# DIALOG MODALS FOR OPERATIONS (WITH MINUTES ADDED AS COST UNIT)
 @st.dialog("➕ Add Manufacturing Operation")
 def add_operation_dialog():
     conn_dialog = get_db()
