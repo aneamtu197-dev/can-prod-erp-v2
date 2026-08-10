@@ -8,7 +8,6 @@ from db import (
     generate_unique_facility_code, generate_unique_operation_code, import_mrpeasy_items, 
     import_mrpeasy_customers, safe_float
 )
-from ui import load_css, render_top_header, render_nav_bar
 
 st.set_page_config(page_title="CAN Prod ERP Custom", layout="wide", initial_sidebar_state="collapsed")
 
@@ -652,22 +651,28 @@ def manage_product_bom_dialog(selected_prod_id=None):
         df_all_mat = pd.read_sql_query("SELECT id, uniq_code, name, purchase_price, unit_id, specific_weight FROM stock_items WHERE category IN ('RAW MATERIAL', 'BUY PART') ORDER BY name", conn_dialog)
         mat_dict = {f"{r['uniq_code']} - {r['name']} ({r['purchase_price']} €)": r['id'] for _, r in df_all_mat.iterrows()}
         
+        # Placeholder Empty Default Selection
+        mat_options = ["Select Material Component..."] + list(mat_dict.keys())
+        
         col_m1, col_m2, col_m3 = st.columns([5, 3, 2])
-        add_mat_key = col_m1.selectbox("Select Material Component", list(mat_dict.keys()), key="sel_bom_mat")
+        add_mat_key = col_m1.selectbox("Select Material Component", mat_options, key="sel_bom_mat")
         add_mat_qty = col_m2.number_input("Required Qty", min_value=0.001, value=1.0, step=0.1, key="num_bom_mat_qty")
         
         col_m3.write(""); col_m3.write("")
         if col_m3.button("➕ Add Material", key="btn_add_mat", use_container_width=True):
-            m_id = mat_dict[add_mat_key]
-            cursor.execute("SELECT purchase_price FROM stock_items WHERE id = ?", (m_id,))
-            price = cursor.fetchone()[0] or 0.0
-            tot_c = float(price * add_mat_qty)
-            cursor.execute("INSERT INTO bom_materials (bom_id, material_item_id, quantity_required, unit_cost, total_cost) VALUES (?, ?, ?, ?, ?)",
-                           (bom_id, m_id, add_mat_qty, price, tot_c))
-            conn_dialog.commit()
-            st.session_state["active_bom_dialog_prod_id"] = target_prod_id
-            st.session_state["keep_bom_dialog_open"] = True
-            st.rerun()
+            if add_mat_key != "Select Material Component...":
+                m_id = mat_dict[add_mat_key]
+                cursor.execute("SELECT purchase_price FROM stock_items WHERE id = ?", (m_id,))
+                price = cursor.fetchone()[0] or 0.0
+                tot_c = float(price * add_mat_qty)
+                cursor.execute("INSERT INTO bom_materials (bom_id, material_item_id, quantity_required, unit_cost, total_cost) VALUES (?, ?, ?, ?, ?)",
+                               (bom_id, m_id, add_mat_qty, price, tot_c))
+                conn_dialog.commit()
+                st.session_state["active_bom_dialog_prod_id"] = target_prod_id
+                st.session_state["keep_bom_dialog_open"] = True
+                st.rerun()
+            else:
+                st.warning("Te rugăm să selectezi un material din listă!")
 
         q_bm = """
             SELECT bm.id as ID, si.uniq_code as 'Code', si.name as 'Material Name', bm.quantity_required as 'Qty', u.code as 'UoM', bm.unit_cost as 'Price (€)', bm.total_cost as 'Total Cost (€)', si.specific_weight as 'Spec Weight'
@@ -697,24 +702,30 @@ def manage_product_bom_dialog(selected_prod_id=None):
         df_all_ops = pd.read_sql_query("SELECT id, uniq_code, name, rate_per_unit, cost_unit, is_outsourced FROM operations ORDER BY uniq_code", conn_dialog)
         op_dict = {f"{r['uniq_code']} - {r['name']} ({r['rate_per_unit']} € / {r['cost_unit']})": r['id'] for _, r in df_all_ops.iterrows()}
         
+        # Placeholder Empty Default Selection
+        op_options = ["Select Operation Step..."] + list(op_dict.keys())
+        
         col_o1, col_o2, col_o3 = st.columns([5, 3, 2])
-        add_op_key = col_o1.selectbox("Select Operation Step", list(op_dict.keys()), key="sel_bom_op")
+        add_op_key = col_o1.selectbox("Select Operation Step", op_options, key="sel_bom_op")
         add_op_dur = col_o2.number_input("Est. Duration / Qty (Hours/Pcs/m2)", min_value=0.01, value=0.5, step=0.1, key="num_bom_op_dur")
         
         col_o3.write(""); col_o3.write("")
         if col_o3.button("➕ Add Operation Step", key="btn_add_op", use_container_width=True):
-            o_id = op_dict[add_op_key]
-            cursor.execute("SELECT rate_per_unit FROM operations WHERE id = ?", (o_id,))
-            rate = cursor.fetchone()[0] or 0.0
-            tot_c = float(rate * add_op_dur)
-            cursor.execute("SELECT COALESCE(MAX(step_number), 0) + 1 FROM bom_operations WHERE bom_id = ?", (bom_id,))
-            next_step = cursor.fetchone()[0]
-            cursor.execute("INSERT INTO bom_operations (bom_id, operation_id, step_number, duration_hours, rate_applied, total_cost) VALUES (?, ?, ?, ?, ?, ?)",
-                           (bom_id, o_id, next_step, add_op_dur, rate, tot_c))
-            conn_dialog.commit()
-            st.session_state["active_bom_dialog_prod_id"] = target_prod_id
-            st.session_state["keep_bom_dialog_open"] = True
-            st.rerun()
+            if add_op_key != "Select Operation Step...":
+                o_id = op_dict[add_op_key]
+                cursor.execute("SELECT rate_per_unit FROM operations WHERE id = ?", (o_id,))
+                rate = cursor.fetchone()[0] or 0.0
+                tot_c = float(rate * add_op_dur)
+                cursor.execute("SELECT COALESCE(MAX(step_number), 0) + 1 FROM bom_operations WHERE bom_id = ?", (bom_id,))
+                next_step = cursor.fetchone()[0]
+                cursor.execute("INSERT INTO bom_operations (bom_id, operation_id, step_number, duration_hours, rate_applied, total_cost) VALUES (?, ?, ?, ?, ?, ?)",
+                               (bom_id, o_id, next_step, add_op_dur, rate, tot_c))
+                conn_dialog.commit()
+                st.session_state["active_bom_dialog_prod_id"] = target_prod_id
+                st.session_state["keep_bom_dialog_open"] = True
+                st.rerun()
+            else:
+                st.warning("Te rugăm să selectezi o operație din listă!")
 
         q_bo = """
             SELECT bo.id as ID, bo.step_number as Step, o.uniq_code as 'Op Code', o.name as 'Operation Name', o.cost_unit as 'Unit', bo.duration_hours as 'Duration', bo.rate_applied as 'Rate (€)', bo.total_cost as 'Total Cost (€)'
