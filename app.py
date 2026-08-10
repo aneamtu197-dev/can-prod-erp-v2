@@ -2,7 +2,10 @@ import streamlit as st
 import pandas as pd
 import requests
 from datetime import datetime
-from db import init_custom_db, get_db, generate_unique_item_code, generate_unique_customer_code, import_mrpeasy_items, import_mrpeasy_customers, safe_float
+from db import (
+    init_custom_db, get_db, generate_unique_item_code, generate_unique_customer_code, 
+    generate_unique_operation_code, import_mrpeasy_items, import_mrpeasy_customers, safe_float
+)
 from ui import load_css, render_top_header, render_nav_bar
 
 st.set_page_config(page_title="CAN Prod ERP Custom", layout="wide", initial_sidebar_state="collapsed")
@@ -98,6 +101,30 @@ def bulk_delete_customers_dialog(item_ids):
         cursor.execute(f"DELETE FROM customers WHERE id IN ({placeholders})", item_ids)
         conn_dialog.commit(); st.success("Deleted!"); st.rerun()
 
+@st.dialog("⚠️ Confirm Bulk Delete")
+def bulk_delete_facilities_dialog(item_ids):
+    st.error(f"Are you sure you want to delete {len(item_ids)} facility(ies)? This action cannot be undone.")
+    c1, c2 = st.columns(2)
+    if c1.button("Cancel", use_container_width=True): st.rerun()
+    if c2.button("Yes, Delete All", type="primary", use_container_width=True):
+        conn_dialog = get_db()
+        cursor = conn_dialog.cursor()
+        placeholders = ",".join(["?"] * len(item_ids))
+        cursor.execute(f"DELETE FROM production_facilities WHERE id IN ({placeholders})", item_ids)
+        conn_dialog.commit(); st.success("Deleted!"); st.rerun()
+
+@st.dialog("⚠️ Confirm Bulk Delete")
+def bulk_delete_operations_dialog(item_ids):
+    st.error(f"Are you sure you want to delete {len(item_ids)} operation(s)? This action cannot be undone.")
+    c1, c2 = st.columns(2)
+    if c1.button("Cancel", use_container_width=True): st.rerun()
+    if c2.button("Yes, Delete All", type="primary", use_container_width=True):
+        conn_dialog = get_db()
+        cursor = conn_dialog.cursor()
+        placeholders = ",".join(["?"] * len(item_ids))
+        cursor.execute(f"DELETE FROM operations WHERE id IN ({placeholders})", item_ids)
+        conn_dialog.commit(); st.success("Deleted!"); st.rerun()
+
 # DIALOG MODAL POP-UP FOR ADDING STOCK ITEMS
 @st.dialog("➕ Add New Item to Stock")
 def add_new_item_dialog(default_type="Raw Material"):
@@ -152,7 +179,6 @@ def add_new_item_dialog(default_type="Raw Material"):
         if st.form_submit_button("💾 Save Item", type="primary", use_container_width=True):
             if auto_uniq and name:
                 cursor = conn_dialog.cursor()
-                # Anti-duplicate check for stock items
                 cursor.execute("SELECT id FROM stock_items WHERE code = ? OR name = ?", (code.strip(), name.strip()))
                 if cursor.fetchone():
                     st.warning(f"⚠️ An item with the code '{code.strip()}' or name '{name.strip()}' already exists in stock!")
@@ -213,7 +239,7 @@ def edit_item_dialog(item_id):
             if c_del.form_submit_button("🗑️ Delete", use_container_width=True):
                 cursor.execute("DELETE FROM stock_items WHERE id = ?", (item_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
 
-# DIALOG MODAL POP-UP FOR ADDING SUPPLIER WITH ANAF
+# DIALOG MODAL POP-UP FOR SUPPLIERS
 @st.dialog("➕ Add New Supplier")
 def add_supplier_dialog():
     conn_dialog = get_db()
@@ -298,7 +324,7 @@ def edit_supplier_dialog(supp_id):
             if c_del.form_submit_button("🗑️ Delete", use_container_width=True):
                 cursor.execute("DELETE FROM suppliers WHERE id = ?", (supp_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
 
-# DIALOG MODAL POP-UP FOR ADDING CUSTOMERS WITH ANAF
+# DIALOG MODAL POP-UP FOR CUSTOMERS
 @st.dialog("➕ Add New Customer")
 def add_customer_dialog():
     conn_dialog = get_db()
@@ -339,7 +365,6 @@ def add_customer_dialog():
         if st.form_submit_button("💾 Save Customer", type="primary", use_container_width=True):
             if c_name.strip():
                 cursor = conn_dialog.cursor()
-                # Anti-duplicate check
                 query_check = "SELECT id FROM customers WHERE name = ?"
                 params_check = [c_name.strip()]
                 if c_cui.strip():
@@ -388,6 +413,155 @@ def edit_customer_dialog(cust_id):
                 conn_dialog.commit(); st.success("Updated!"); st.rerun()
             if c_del.form_submit_button("🗑️ Delete", use_container_width=True):
                 cursor.execute("DELETE FROM customers WHERE id = ?", (cust_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
+
+# DIALOG MODALS FOR PRODUCTION FACILITIES
+@st.dialog("➕ Add Production Facility / Equipment")
+def add_facility_dialog():
+    conn_dialog = get_db()
+    with st.form("add_facility_form"):
+        st.subheader("Facility / Equipment Details")
+        col1, col2 = st.columns(2)
+        with col1:
+            f_code = st.text_input("Facility Code *", placeholder="e.g. EQ-003")
+            f_name = st.text_input("Facility / Machine Name *", placeholder="e.g. Abkant Bystronic 150T")
+            f_type = st.selectbox("Category / Type *", ["Laser Cutting", "Press Brake / Abkant", "Welding Station", "Powder Coating / Vopsitorie", "CNC Machining", "General Machine", "Manual Workstation"])
+        with col2:
+            f_brand = st.text_input("Brand / Model", placeholder="e.g. Trumpf TruLaser 3030")
+            f_status = st.selectbox("Operational Status", ["Operational", "In Maintenance", "Standby / Idle", "Out of Service"])
+            f_date = st.date_input("Next Maintenance Date")
+
+        st.divider()
+        if st.form_submit_button("💾 Save Facility", type="primary", use_container_width=True):
+            if f_code and f_name:
+                cursor = conn_dialog.cursor()
+                cursor.execute("SELECT id FROM production_facilities WHERE code = ? OR name = ?", (f_code.strip(), f_name.strip()))
+                if cursor.fetchone():
+                    st.warning(f"⚠️ A facility with code '{f_code.strip()}' or name '{f_name.strip()}' already exists!")
+                else:
+                    cursor.execute("INSERT INTO production_facilities (code, name, facility_type, brand_model, status, next_maintenance_date) VALUES (?, ?, ?, ?, ?, ?)",
+                                   (f_code.strip(), f_name.strip(), f_type, f_brand.strip(), f_status, str(f_date)))
+                    conn_dialog.commit(); st.success("Facility saved!"); st.rerun()
+            else:
+                st.warning("Please fill in Facility Code and Name!")
+
+@st.dialog("✏️ Edit Facility Details")
+def edit_facility_dialog(fac_id):
+    conn_dialog = get_db()
+    cursor = conn_dialog.cursor()
+    cursor.execute("SELECT code, name, facility_type, brand_model, status, next_maintenance_date FROM production_facilities WHERE id = ?", (fac_id,))
+    row = cursor.fetchone()
+    if row:
+        with st.form("edit_facility_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                e_code = st.text_input("Facility Code *", value=row[0])
+                e_name = st.text_input("Facility / Machine Name *", value=row[1])
+                types_opts = ["Laser Cutting", "Press Brake / Abkant", "Welding Station", "Powder Coating / Vopsitorie", "CNC Machining", "General Machine", "Manual Workstation"]
+                e_type = st.selectbox("Category / Type *", types_opts, index=types_opts.index(row[2]) if row[2] in types_opts else 0)
+            with col2:
+                e_brand = st.text_input("Brand / Model", value=row[3] if row[3] else "")
+                status_opts = ["Operational", "In Maintenance", "Standby / Idle", "Out of Service"]
+                e_status = st.selectbox("Operational Status", status_opts, index=status_opts.index(row[4]) if row[4] in status_opts else 0)
+
+            c_save, c_del = st.columns([8, 2])
+            if c_save.form_submit_button("💾 Save Changes", type="primary", use_container_width=True):
+                cursor.execute("UPDATE production_facilities SET code=?, name=?, facility_type=?, brand_model=?, status=? WHERE id=?", 
+                               (e_code.strip(), e_name.strip(), e_type, e_brand.strip(), e_status, fac_id))
+                conn_dialog.commit(); st.success("Updated!"); st.rerun()
+            if c_del.form_submit_button("🗑️ Delete", use_container_width=True):
+                cursor.execute("DELETE FROM production_facilities WHERE id = ?", (fac_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
+
+# DIALOG MODALS FOR OPERATIONS
+@st.dialog("➕ Add Manufacturing Operation")
+def add_operation_dialog():
+    conn_dialog = get_db()
+    auto_op_code = generate_unique_operation_code(conn_dialog)
+    
+    df_fac = pd.read_sql_query("SELECT id, name, facility_type FROM production_facilities ORDER BY name", conn_dialog)
+    fac_dict = {f"{r['name']} ({r['facility_type']})": r['id'] for _, r in df_fac.iterrows()}
+    fac_options = ["No Equipment Assigned"] + list(fac_dict.keys())
+
+    with st.form("add_operation_form"):
+        st.subheader("Operation Characteristics")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.text_input("Operation Uniq Code (Auto-Generated) *", value=auto_op_code, disabled=True)
+            op_name = st.text_input("Operation Name *", placeholder="e.g. Debitare laser teava")
+            selected_fac = st.selectbox("Assigned Facility / Equipment", fac_options)
+            cost_unit = st.selectbox("Billing / Cost Unit *", ["Hour", "Sqm (m2)", "Pcs", "Meter"])
+            rate_unit = st.number_input("Rate per Unit (€) *", min_value=0.0, value=25.0, step=1.0)
+            
+        with col2:
+            prod_level = st.number_input("Productivity Level (1.0 = 100%, 0.9 = 90%) *", min_value=0.1, max_value=2.0, value=1.0, step=0.05)
+            operators_cnt = st.number_input("Number of Operators *", min_value=1, value=1)
+            
+            st.markdown("##### Max Capacity Limits")
+            max_day = st.number_input("Max Hours / Day", min_value=0.0, value=8.0 * operators_cnt)
+            max_week = st.number_input("Max Hours / Week", min_value=0.0, value=40.0 * operators_cnt)
+            max_month = st.number_input("Max Hours / Month", min_value=0.0, value=160.0 * operators_cnt)
+
+        st.divider()
+        if st.form_submit_button("💾 Save Operation", type="primary", use_container_width=True):
+            if op_name.strip():
+                cursor = conn_dialog.cursor()
+                cursor.execute("SELECT id FROM operations WHERE name = ?", (op_name.strip(),))
+                if cursor.fetchone():
+                    st.warning(f"⚠️ An operation with the name '{op_name.strip()}' already exists!")
+                else:
+                    fac_id = fac_dict.get(selected_fac) if selected_fac != "No Equipment Assigned" else None
+                    cursor.execute("""
+                        INSERT INTO operations (uniq_code, name, cost_unit, rate_per_unit, productivity_level, max_hours_day, max_hours_week, max_hours_month, operators_count, facility_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (auto_op_code, op_name.strip(), cost_unit, rate_unit, prod_level, max_day, max_week, max_month, operators_cnt, fac_id))
+                    conn_dialog.commit(); st.success("Operation saved!"); st.rerun()
+            else:
+                st.warning("Please fill in Operation Name!")
+
+@st.dialog("✏️ Edit Operation Details")
+def edit_operation_dialog(op_id):
+    conn_dialog = get_db()
+    cursor = conn_dialog.cursor()
+    cursor.execute("SELECT uniq_code, name, cost_unit, rate_per_unit, productivity_level, max_hours_day, max_hours_week, max_hours_month, operators_count, facility_id FROM operations WHERE id = ?", (op_id,))
+    row = cursor.fetchone()
+    
+    if row:
+        df_fac = pd.read_sql_query("SELECT id, name, facility_type FROM production_facilities ORDER BY name", conn_dialog)
+        fac_dict = {f"{r['name']} ({r['facility_type']})": r['id'] for _, r in df_fac.iterrows()}
+        fac_options = ["No Equipment Assigned"] + list(fac_dict.keys())
+        
+        curr_fac_name = "No Equipment Assigned"
+        if row[9]:
+            curr_f = [k for k, v in fac_dict.items() if v == row[9]]
+            if curr_f: curr_fac_name = curr_f[0]
+
+        with st.form("edit_operation_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.text_input("Operation Uniq Code (Read-Only) *", value=row[0], disabled=True)
+                e_name = st.text_input("Operation Name *", value=row[1])
+                e_fac = st.selectbox("Assigned Facility / Equipment", fac_options, index=fac_options.index(curr_fac_name) if curr_fac_name in fac_options else 0)
+                units_list = ["Hour", "Sqm (m2)", "Pcs", "Meter"]
+                e_unit = st.selectbox("Billing / Cost Unit *", units_list, index=units_list.index(row[2]) if row[2] in units_list else 0)
+                e_rate = st.number_input("Rate per Unit (€) *", min_value=0.0, value=safe_float(row[3]))
+            with col2:
+                e_prod = st.number_input("Productivity Level *", min_value=0.1, max_value=2.0, value=safe_float(row[4]))
+                e_ops = st.number_input("Number of Operators *", min_value=1, value=int(row[8]))
+                
+                st.markdown("##### Max Capacity Limits")
+                e_mday = st.number_input("Max Hours / Day", min_value=0.0, value=safe_float(row[5]))
+                e_mweek = st.number_input("Max Hours / Week", min_value=0.0, value=safe_float(row[6]))
+                e_mmonth = st.number_input("Max Hours / Month", min_value=0.0, value=safe_float(row[7]))
+
+            c_save, c_del = st.columns([8, 2])
+            if c_save.form_submit_button("💾 Save Changes", type="primary", use_container_width=True):
+                fac_id = fac_dict.get(e_fac) if e_fac != "No Equipment Assigned" else None
+                cursor.execute("""
+                    UPDATE operations SET name=?, cost_unit=?, rate_per_unit=?, productivity_level=?, max_hours_day=?, max_hours_week=?, max_hours_month=?, operators_count=?, facility_id=?
+                    WHERE id=?
+                """, (e_name.strip(), e_unit, e_rate, e_prod, e_mday, e_mweek, e_mmonth, e_ops, fac_id, op_id))
+                conn_dialog.commit(); st.success("Updated!"); st.rerun()
+            if c_del.form_submit_button("🗑️ Delete", use_container_width=True):
+                cursor.execute("DELETE FROM operations WHERE id = ?", (op_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
 
 # ==========================================
 # PAGE ROUTING
@@ -541,6 +715,86 @@ elif active_page == "Stock":
         st.markdown("##### Units"); df_u = pd.read_sql_query("SELECT * FROM units", conn); st.dataframe(df_u, hide_index=True)
 
 # ==========================================
+# PRODUCTION & BOM MODULE
+# ==========================================
+elif active_page == "BOM":
+    active_subtab_bom = query_params.get("subtab", "Operations")
+    
+    subtabs_bom_html = '<div class="mrp-subtabs">'
+    for t_k, t_l in [("Operations", "⚙️ Operations"), ("Facilities", "🏢 Production Facilities"), ("BOM_Recipes", "📑 BOM Recipes"), ("Routing", "🔀 Routing")]:
+        subtabs_bom_html += f'<a href="?page=BOM&subtab={t_k}" target="_self" class="{"mrp-subtab-active" if active_subtab_bom == t_k else "mrp-subtab"}">{t_l}</a>'
+    st.markdown(subtabs_bom_html + '</div>', unsafe_allow_html=True)
+    
+    # --- OPERATIONS SUBTAB ---
+    if active_subtab_bom == "Operations":
+        c_head, c_btn = st.columns([8, 2])
+        with c_head: st.markdown("##### Manufacturing Operations & Process Rates")
+        with c_btn:
+            if st.button("➕ Add Operation", type="primary", use_container_width=True): add_operation_dialog()
+            
+        st.write("")
+        q_op = """
+            SELECT 
+                o.id as ID,
+                o.uniq_code as 'Uniq Code',
+                o.name as 'Operation Name',
+                f.name as 'Assigned Equipment',
+                o.cost_unit as 'Cost Unit',
+                o.rate_per_unit as 'Rate (€)',
+                o.productivity_level as 'Productivity',
+                o.operators_count as 'Operators',
+                o.max_hours_day as 'Max Hrs/Day'
+            FROM operations o
+            LEFT JOIN production_facilities f ON o.facility_id = f.id
+            ORDER BY o.uniq_code
+        """
+        df_op = pd.read_sql_query(q_op, conn)
+        sel_op = st.dataframe(
+            df_op, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_op",
+            column_config={
+                "ID": None,
+                "Rate (€)": st.column_config.NumberColumn("Rate (€)", format="%.2f €"),
+                "Productivity": st.column_config.NumberColumn("Productivity", format="%.2f")
+            }
+        )
+        
+        if sel_op and len(sel_op.selection.rows) > 0:
+            selected_ids = [int(df_op.iloc[i]['ID']) for i in sel_op.selection.rows]
+            st.info(f"☑️ Selected {len(selected_ids)} operation(s)")
+            col_a1, col_a2, _ = st.columns([2, 2, 8])
+            with col_a1:
+                if len(selected_ids) == 1:
+                    if st.button("✏️ Edit Selected", use_container_width=True): edit_operation_dialog(selected_ids[0])
+            with col_a2:
+                if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_operations_dialog(selected_ids)
+
+    # --- PRODUCTION FACILITIES SUBTAB ---
+    elif active_subtab_bom == "Facilities":
+        c_head, c_btn = st.columns([8, 2])
+        with c_head: st.markdown("##### Production Facilities & Equipment Inventory")
+        with c_btn:
+            if st.button("➕ Add Facility", type="primary", use_container_width=True): add_facility_dialog()
+            
+        st.write("")
+        df_fac = pd.read_sql_query("SELECT id as ID, code as Code, name as 'Equipment Name', facility_type as 'Type', brand_model as 'Brand / Model', status as 'Status', next_maintenance_date as 'Next Maintenance' FROM production_facilities ORDER BY code", conn)
+        sel_fac = st.dataframe(df_fac, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_fac", column_config={"ID": None})
+        
+        if sel_fac and len(sel_fac.selection.rows) > 0:
+            selected_ids = [int(df_fac.iloc[i]['ID']) for i in sel_fac.selection.rows]
+            st.info(f"☑️ Selected {len(selected_ids)} facility(ies)")
+            col_a1, col_a2, _ = st.columns([2, 2, 8])
+            with col_a1:
+                if len(selected_ids) == 1:
+                    if st.button("✏️ Edit Selected", use_container_width=True): edit_facility_dialog(selected_ids[0])
+            with col_a2:
+                if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_facilities_dialog(selected_ids)
+
+    elif active_subtab_bom == "BOM_Recipes":
+        st.info("BOM Recipes module will be configured next.")
+    elif active_subtab_bom == "Routing":
+        st.info("Routing functionality will be configured next.")
+
+# ==========================================
 # RFQ & ORDERS MODULE
 # ==========================================
 elif active_page == "RFQ":
@@ -583,8 +837,5 @@ elif active_page == "RFQ":
         st.info("Quotations functionality will be added here.")
     elif active_subtab_rfq == "Orders":
         st.info("Sales Orders functionality will be added here.")
-
-elif active_page == "BOM":
-    st.info("Production & BOM module is ready for configuration.")
 
 conn.close()
