@@ -115,6 +115,11 @@ def init_custom_db():
         for c, n, t in [('WH-MAIN', 'Main Central Warehouse', 'Internal Warehouse'), ('WH-CUST', 'Customer Virtual Location', 'Customer Virtual Storage')]:
             cursor.execute("INSERT INTO warehouses (code, name, location_type) VALUES (?, ?, ?)", (c, n, t))
 
+    cursor.execute("SELECT COUNT(*) FROM customers")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("INSERT INTO customers (code, name, cui, contact_person, email) VALUES (?, ?, ?, ?, ?)", 
+                       ('CU00001', 'Client Generic SRL', 'RO123456', 'Ion Client', 'contact@client.ro'))
+
     conn.commit()
     populate_missing_uniq_codes(conn)
     conn.close()
@@ -178,6 +183,19 @@ def generate_unique_item_code(conn, category, sub_group=""):
             
     next_num = max_num + 1 if max_num > 0 else (1834 if prefix == 'A0' else 1)
     return f"A0{next_num:04d}" if prefix == 'A0' else f"{prefix}{next_num:04d}"
+
+def generate_unique_customer_code(conn):
+    cursor = conn.cursor()
+    cursor.execute("SELECT code FROM customers WHERE code LIKE 'CU%'")
+    rows = cursor.fetchall()
+    max_num = 0
+    for (c_val,) in rows:
+        if c_val and c_val.startswith('CU'):
+            num_part = c_val.replace('CU', '')
+            if num_part.isdigit():
+                max_num = max(max_num, int(num_part))
+    next_num = max_num + 1
+    return f"CU{next_num:05d}"
 
 def clean_and_classify_item(part_no, desc, group_num):
     text_upper = f"{part_no} {desc}".upper()
