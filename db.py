@@ -92,7 +92,9 @@ def init_custom_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         code VARCHAR(50) UNIQUE NOT NULL,
         name VARCHAR(255) NOT NULL,
-        location_type VARCHAR(100) DEFAULT 'Internal Warehouse'
+        location_type VARCHAR(100) DEFAULT 'Internal Warehouse',
+        customer_id INTEGER,
+        FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
     );
     """)
 
@@ -114,6 +116,7 @@ def init_custom_db():
         current_stock REAL DEFAULT 0.0,
         min_stock REAL DEFAULT 0.0,
         customer_id INTEGER,
+        barcode VARCHAR(100),
         FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE SET NULL,
         FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL,
         FOREIGN KEY (unit_id) REFERENCES units(id),
@@ -130,6 +133,7 @@ def init_custom_db():
         total_material_cost REAL DEFAULT 0.0,
         total_labor_cost REAL DEFAULT 0.0,
         total_production_cost REAL DEFAULT 0.0,
+        calculated_weight REAL DEFAULT 0.0,
         FOREIGN KEY (product_item_id) REFERENCES stock_items(id) ON DELETE CASCADE,
         FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL
     );
@@ -169,30 +173,44 @@ def init_custom_db():
     existing_stock_cols = [col[1] for col in cursor.fetchall()]
     if 'customer_id' not in existing_stock_cols:
         cursor.execute("ALTER TABLE stock_items ADD COLUMN customer_id INTEGER")
+    if 'barcode' not in existing_stock_cols:
+        cursor.execute("ALTER TABLE stock_items ADD COLUMN barcode VARCHAR(100)")
+
+    cursor.execute("PRAGMA table_info(warehouses)")
+    existing_wh_cols = [col[1] for col in cursor.fetchall()]
+    if 'customer_id' not in existing_wh_cols:
+        cursor.execute("ALTER TABLE warehouses ADD COLUMN customer_id INTEGER")
 
     # DEFAULT UNITS
     cursor.execute("SELECT COUNT(*) FROM units")
     if cursor.fetchone()[0] == 0:
-        for c, n in [('Ml', 'Linear Meters'), ('kg', 'Kilograms'), ('pcs', 'Pieces'), ('m2', 'Square Meters'), ('l', 'Liters')]:
+        for c, n in [('pcs', 'Pieces'), ('kg', 'Kilograms'), ('Ml', 'Linear Meters'), ('m2', 'Square Meters'), ('l', 'Liters')]:
             cursor.execute("INSERT INTO units (code, name) VALUES (?, ?)", (c, n))
 
     # DEFAULT WAREHOUSES
     cursor.execute("SELECT COUNT(*) FROM warehouses")
     if cursor.fetchone()[0] == 0:
-        for c, n, t in [('WH-MAIN', 'Main Central Warehouse', 'Internal Warehouse'), ('WH-CUST', 'Customer Virtual Location', 'Customer Virtual Storage')]:
+        for c, n, t in [('WH-MAIN', 'Main Central Warehouse', 'Internal Warehouse'), ('WH-FINISHED', 'Finished Goods Storage', 'Internal Warehouse')]:
             cursor.execute("INSERT INTO warehouses (code, name, location_type) VALUES (?, ?, ?)", (c, n, t))
 
-    # DEFAULT FACILITIES
-    cursor.execute("SELECT COUNT(*) FROM production_facilities")
-    if cursor.fetchone()[0] == 0:
-        cursor.execute("INSERT INTO production_facilities (code, name, facility_type, brand_model) VALUES (?, ?, ?, ?)",
-                       ('EQ-0001', 'Laser Tabla Trumpf', 'Laser Cutting', 'TruLaser 3030'))
-        cursor.execute("INSERT INTO production_facilities (code, name, facility_type, brand_model) VALUES (?, ?, ?, ?)",
-                       ('EQ-0002', 'Statie Sudura MIG-MAG', 'Welding Station', 'Kemppi MasterTig'))
+    # AUTO GENERATE VIRTUAL WAREHOUSES FOR ALL EXISTING CUSTOMERS
+    auto_create_customer_warehouses(conn)
 
     conn.commit()
     populate_missing_uniq_codes(conn)
     conn.close()
+
+def auto_create_customer_warehouses(conn):
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, code, name FROM customers")
+    custs = cursor.fetchall()
+    for c_id, c_code, c_name in custs:
+        wh_code = f"WH-CUST-{c_id:03d}"
+        wh_name = f"Virtual WH - {c_name}"
+        cursor.execute("SELECT id FROM warehouses WHERE customer_id = ?", (c_id,))
+        if not cursor.fetchone():
+            cursor.execute("INSERT INTO warehouses (code, name, location_type, customer_id) VALUES (?, ?, 'Customer Virtual Storage', ?)", (wh_code, wh_name, c_id))
+    conn.commit()
 
 def populate_missing_uniq_codes(conn):
     cursor = conn.cursor()
@@ -251,7 +269,7 @@ def generate_unique_item_code(conn, category, sub_group=""):
                 num_part = check_val.replace(prefix, '')
                 if num_part.isdigit(): max_num = max(max_num, int(num_part))
             
-    next_num = max_num + 1 if max_num > 0 else (1834 if prefix == 'A0' else 1)
+    next_num = max_num + 1 if max_num > 0 else (1920 if prefix == 'A0' else 1)
     return f"A0{next_num:04d}" if prefix == 'A0' else f"{prefix}{next_num:04d}"
 
 def generate_unique_customer_code(conn):
@@ -463,6 +481,7 @@ def import_mrpeasy_customers(df):
             ins += 1
 
     conn.commit()
+    auto_create_customer_warehouses(conn)
     conn.close()
     return ins, upd
 
