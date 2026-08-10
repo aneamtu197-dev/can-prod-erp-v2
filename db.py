@@ -13,6 +13,11 @@ def init_custom_db():
         code VARCHAR(50) UNIQUE NOT NULL,
         name VARCHAR(255) NOT NULL,
         supplier_type VARCHAR(100) DEFAULT 'Raw Material Supplier',
+        cui VARCHAR(50),
+        reg_com VARCHAR(50),
+        address TEXT,
+        iban VARCHAR(100),
+        bank_name VARCHAR(100),
         contact_person VARCHAR(255),
         phone VARCHAR(100),
         email VARCHAR(255),
@@ -67,10 +72,20 @@ def init_custom_db():
         if col_name not in existing_cols:
             cursor.execute(f"ALTER TABLE stock_items ADD COLUMN {col_name} {col_type}")
 
-    # AUTO-REPAIR SCHEMA FOR SUPPLIERS
+    # AUTO-REPAIR SCHEMA FOR SUPPLIERS (ANAF INTEGRATION)
     cursor.execute("PRAGMA table_info(suppliers)")
-    if 'supplier_type' not in [col[1] for col in cursor.fetchall()]:
-        cursor.execute("ALTER TABLE suppliers ADD COLUMN supplier_type VARCHAR(100) DEFAULT 'Raw Material Supplier'")
+    existing_supp_cols = [col[1] for col in cursor.fetchall()]
+    missing_supp_cols = {
+        'supplier_type': "VARCHAR(100) DEFAULT 'Raw Material Supplier'",
+        'cui': "VARCHAR(50)",
+        'reg_com': "VARCHAR(50)",
+        'address': "TEXT",
+        'iban': "VARCHAR(100)",
+        'bank_name': "VARCHAR(100)"
+    }
+    for col_name, col_type in missing_supp_cols.items():
+        if col_name not in existing_supp_cols:
+            cursor.execute(f"ALTER TABLE suppliers ADD COLUMN {col_name} {col_type}")
 
     cursor.execute("SELECT COUNT(*) FROM units")
     if cursor.fetchone()[0] == 0:
@@ -81,11 +96,6 @@ def init_custom_db():
     if cursor.fetchone()[0] == 0:
         for c, n, t in [('WH-MAIN', 'Main Central Warehouse', 'Internal Warehouse'), ('WH-CUST', 'Customer Virtual Location', 'Customer Virtual Storage')]:
             cursor.execute("INSERT INTO warehouses (code, name, location_type) VALUES (?, ?, ?)", (c, n, t))
-
-    cursor.execute("SELECT COUNT(*) FROM suppliers")
-    if cursor.fetchone()[0] == 0:
-        for c, n, stype, cp, p, e, lt in [('SUP001', 'Baurom Construct SRL', 'Raw Material Supplier', 'John Smith', '+40722111222', 'orders@baurom.ro', 3), ('SUP002', 'LemnConfex SRL', 'Buy Parts Supplier', 'Mary Doe', '+40733444555', 'sales@lemnconfex.ro', 5)]:
-            cursor.execute("INSERT INTO suppliers (code, name, supplier_type, contact_person, phone, email, lead_time_days) VALUES (?, ?, ?, ?, ?, ?, ?)", (c, n, stype, cp, p, e, lt))
 
     conn.commit()
     populate_missing_uniq_codes(conn)
