@@ -1,4 +1,3 @@
-streamlit
-pandas
-requests
-fpdf2
+git add requirements.txt
+git commit -m "Adaugat fpdf2 in requirements"
+git push
