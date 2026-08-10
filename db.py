@@ -129,9 +129,9 @@ def init_custom_db():
     cursor.execute("SELECT COUNT(*) FROM production_facilities")
     if cursor.fetchone()[0] == 0:
         cursor.execute("INSERT INTO production_facilities (code, name, facility_type, brand_model) VALUES (?, ?, ?, ?)",
-                       ('EQ-001', 'Laser Tabla Trumpf', 'Laser Cutting', 'TruLaser 3030'))
+                       ('EQ-0001', 'Laser Tabla Trumpf', 'Laser Cutting', 'TruLaser 3030'))
         cursor.execute("INSERT INTO production_facilities (code, name, facility_type, brand_model) VALUES (?, ?, ?, ?)",
-                       ('EQ-002', 'Statie Sudura MIG-MAG', 'Welding Station', 'Kemppi MasterTig'))
+                       ('EQ-0002', 'Statie Sudura MIG-MAG', 'Welding Station', 'Kemppi MasterTig'))
 
     conn.commit()
     populate_missing_uniq_codes(conn)
@@ -209,6 +209,19 @@ def generate_unique_customer_code(conn):
                 max_num = max(max_num, int(num_part))
     next_num = max_num + 1
     return f"CU{next_num:05d}"
+
+def generate_unique_facility_code(conn):
+    cursor = conn.cursor()
+    cursor.execute("SELECT code FROM production_facilities WHERE code LIKE 'EQ-%'")
+    rows = cursor.fetchall()
+    max_num = 0
+    for (c_val,) in rows:
+        if c_val and c_val.startswith('EQ-'):
+            num_part = c_val.replace('EQ-', '')
+            if num_part.isdigit():
+                max_num = max(max_num, int(num_part))
+    next_num = max_num + 1
+    return f"EQ-{next_num:04d}"
 
 def generate_unique_operation_code(conn):
     cursor = conn.cursor()
