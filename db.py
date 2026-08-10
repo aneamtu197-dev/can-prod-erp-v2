@@ -113,25 +113,62 @@ def init_custom_db():
         weight_unit VARCHAR(20) DEFAULT 'kg',
         current_stock REAL DEFAULT 0.0,
         min_stock REAL DEFAULT 0.0,
+        customer_id INTEGER,
         FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE SET NULL,
+        FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL,
         FOREIGN KEY (unit_id) REFERENCES units(id),
         FOREIGN KEY (warehouse_id) REFERENCES warehouses(id)
     );
     """)
 
-    # AUTO-REPAIR SCHEMA FOR OPERATIONS (OUTSOURCING COLUMNS)
-    cursor.execute("PRAGMA table_info(operations)")
-    existing_op_cols = [col[1] for col in cursor.fetchall()]
-    new_cols = {
-        'hours_per_operator': "REAL DEFAULT 8.0",
-        'is_outsourced': "INTEGER DEFAULT 0",
-        'preferred_supplier_id': "INTEGER",
-        'outsourcing_type': "VARCHAR(100)",
-        'material_supplied_by': "VARCHAR(50) DEFAULT 'CAN PROD'"
-    }
-    for col_name, col_type in new_cols.items():
-        if col_name not in existing_op_cols:
-            cursor.execute(f"ALTER TABLE operations ADD COLUMN {col_name} {col_type}")
+    # --- PRODUCT BOMS (MASTER RECIPE) ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS product_boms (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_item_id INTEGER UNIQUE NOT NULL,
+        customer_id INTEGER,
+        total_material_cost REAL DEFAULT 0.0,
+        total_labor_cost REAL DEFAULT 0.0,
+        total_production_cost REAL DEFAULT 0.0,
+        FOREIGN KEY (product_item_id) REFERENCES stock_items(id) ON DELETE CASCADE,
+        FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL
+    );
+    """)
+
+    # --- BOM MATERIAL COMPONENTS ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS bom_materials (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        bom_id INTEGER NOT NULL,
+        material_item_id INTEGER NOT NULL,
+        quantity_required REAL DEFAULT 0.0,
+        unit_cost REAL DEFAULT 0.0,
+        total_cost REAL DEFAULT 0.0,
+        FOREIGN KEY (bom_id) REFERENCES product_boms(id) ON DELETE CASCADE,
+        FOREIGN KEY (material_item_id) REFERENCES stock_items(id)
+    );
+    """)
+
+    # --- BOM OPERATIONS ROUTING ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS bom_operations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        bom_id INTEGER NOT NULL,
+        operation_id INTEGER NOT NULL,
+        step_number INTEGER DEFAULT 1,
+        duration_hours REAL DEFAULT 0.0,
+        rate_applied REAL DEFAULT 0.0,
+        total_cost REAL DEFAULT 0.0,
+        FOREIGN KEY (bom_id) REFERENCES product_boms(id) ON DELETE CASCADE,
+        FOREIGN KEY (operation_id) REFERENCES operations(id)
+    );
+    """)
+
+    # AUTO-REPAIR SCHEMA
+    cursor.execute("PRAGMA table_info(stock_items)")
+    existing_stock_cols = [col[1] for col in cursor.fetchall()]
+    if 'customer_id' not in existing_stock_cols:
+        cursor.execute("ALTER TABLE stock_items ADD COLUMN customer_id INTEGER")
 
     # DEFAULT UNITS
     cursor.execute("SELECT COUNT(*) FROM units")
