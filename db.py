@@ -70,7 +70,12 @@ def init_custom_db():
         max_hours_month REAL DEFAULT 160.0,
         operators_count INTEGER DEFAULT 1,
         facility_id INTEGER,
-        FOREIGN KEY (facility_id) REFERENCES production_facilities(id) ON DELETE SET NULL
+        is_outsourced INTEGER DEFAULT 0,
+        preferred_supplier_id INTEGER,
+        outsourcing_type VARCHAR(100),
+        material_supplied_by VARCHAR(50) DEFAULT 'CAN PROD',
+        FOREIGN KEY (facility_id) REFERENCES production_facilities(id) ON DELETE SET NULL,
+        FOREIGN KEY (preferred_supplier_id) REFERENCES suppliers(id) ON DELETE SET NULL
     );
     """)
 
@@ -114,11 +119,19 @@ def init_custom_db():
     );
     """)
 
-    # AUTO-REPAIR SCHEMA FOR OPERATIONS
+    # AUTO-REPAIR SCHEMA FOR OPERATIONS (OUTSOURCING COLUMNS)
     cursor.execute("PRAGMA table_info(operations)")
     existing_op_cols = [col[1] for col in cursor.fetchall()]
-    if 'hours_per_operator' not in existing_op_cols:
-        cursor.execute("ALTER TABLE operations ADD COLUMN hours_per_operator REAL DEFAULT 8.0")
+    new_cols = {
+        'hours_per_operator': "REAL DEFAULT 8.0",
+        'is_outsourced': "INTEGER DEFAULT 0",
+        'preferred_supplier_id': "INTEGER",
+        'outsourcing_type': "VARCHAR(100)",
+        'material_supplied_by': "VARCHAR(50) DEFAULT 'CAN PROD'"
+    }
+    for col_name, col_type in new_cols.items():
+        if col_name not in existing_op_cols:
+            cursor.execute(f"ALTER TABLE operations ADD COLUMN {col_name} {col_type}")
 
     # DEFAULT UNITS
     cursor.execute("SELECT COUNT(*) FROM units")
