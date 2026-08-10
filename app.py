@@ -12,7 +12,6 @@ def init_custom_db():
     conn = sqlite3.connect('can_prod_v2.db')
     cursor = conn.cursor()
     
-    # Suppliers Table
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS suppliers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -25,7 +24,6 @@ def init_custom_db():
     );
     """)
 
-    # Units Table
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS units (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -34,7 +32,6 @@ def init_custom_db():
     );
     """)
 
-    # Warehouses Table
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS warehouses (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,7 +41,6 @@ def init_custom_db():
     );
     """)
 
-    # Stock Items Table with Mandatory Uniq Code
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS stock_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,7 +64,6 @@ def init_custom_db():
     );
     """)
 
-    # AUTO-REPAIR SCHEMA: Add missing columns if database table existed prior to schema updates
     cursor.execute("PRAGMA table_info(stock_items)")
     existing_cols = [col[1] for col in cursor.fetchall()]
     
@@ -84,31 +79,25 @@ def init_custom_db():
         if col_name not in existing_cols:
             cursor.execute(f"ALTER TABLE stock_items ADD COLUMN {col_name} {col_type}")
 
-    # Populate Default Units
     cursor.execute("SELECT COUNT(*) FROM units")
     if cursor.fetchone()[0] == 0:
         for c, n in [('Ml', 'Linear Meters'), ('kg', 'Kilograms'), ('pcs', 'Pieces'), ('m2', 'Square Meters'), ('l', 'Liters')]:
             cursor.execute("INSERT INTO units (code, name) VALUES (?, ?)", (c, n))
 
-    # Populate Default Warehouses
     cursor.execute("SELECT COUNT(*) FROM warehouses")
     if cursor.fetchone()[0] == 0:
         for c, n, t in [('WH-MAIN', 'Main Central Warehouse', 'Internal Warehouse'), ('WH-CUST', 'Customer Virtual Location', 'Customer Virtual Storage')]:
             cursor.execute("INSERT INTO warehouses (code, name, location_type) VALUES (?, ?, ?)", (c, n, t))
 
-    # Populate Default Suppliers
     cursor.execute("SELECT COUNT(*) FROM suppliers")
     if cursor.fetchone()[0] == 0:
         for c, n, cp, p, e, lt in [('SUP001', 'Baurom Construct SRL', 'John Smith', '+40722111222', 'orders@baurom.ro', 3), ('SUP002', 'LemnConfex SRL', 'Mary Doe', '+40733444555', 'sales@lemnconfex.ro', 5)]:
             cursor.execute("INSERT INTO suppliers (code, name, contact_person, phone, email, lead_time_days) VALUES (?, ?, ?, ?, ?, ?)", (c, n, cp, p, e, lt))
 
     conn.commit()
-
-    # AUTO-POPULATE UNIQ_CODE FOR EXISTING IMPORTED ITEMS WITHOUT CODES
     populate_missing_uniq_codes(conn)
     conn.close()
 
-# Automatic Migration to assign uniq_codes to already imported items
 def populate_missing_uniq_codes(conn):
     cursor = conn.cursor()
     cursor.execute("SELECT id, code, category, sub_group FROM stock_items WHERE uniq_code IS NULL OR uniq_code = '' OR uniq_code = 'nan'")
@@ -156,7 +145,6 @@ init_custom_db()
 def get_db():
     return sqlite3.connect('can_prod_v2.db')
 
-# Automatic Unique Code Generator Based on Category & Sub-Group
 def generate_unique_item_code(conn, category, sub_group=""):
     cursor = conn.cursor()
     cat_upper = category.upper()
@@ -195,7 +183,6 @@ def generate_unique_item_code(conn, category, sub_group=""):
     else:
         return f"{prefix}{next_num:04d}"
 
-# Intelligent Item Classifier & Name Cleaner for MRPeasy Import
 def clean_and_classify_item(part_no, desc, group_num):
     text_upper = f"{part_no} {desc}".upper()
     buy_keywords = [
@@ -323,7 +310,6 @@ def clean_and_classify_item(part_no, desc, group_num):
     name = re.sub(r'\s+', ' ', name).strip()
     return sub_group, category, name
 
-# Function to Import MRPeasy CSV Into Custom Stock Database
 def import_mrpeasy_items(df):
     conn = get_db()
     cursor = conn.cursor()
@@ -336,10 +322,8 @@ def import_mrpeasy_items(df):
         raw_desc = str(row.get('part description', row.get('description', row.get('name', orig_code)))).strip()
         group_num = str(row.get('group number', row.get('group name', row.get('group', '')))).strip()
         
-        # Clean Description & Sub-Group Classification
         sub_group, category, clean_name = clean_and_classify_item(orig_code, raw_desc, group_num)
 
-        # Generate Auto Uniq Code if missing or if original is generic
         if orig_code.startswith('A0') and category == 'FINISHED GOOD':
             uniq_code = orig_code
         else:
@@ -347,10 +331,8 @@ def import_mrpeasy_items(df):
 
         item_code = orig_code if orig_code and orig_code != 'nan' else uniq_code
 
-        # Unit of Measure
         u_code = str(row.get('uom', row.get('unit of measure', row.get('unit', 'pcs')))).strip()
         if not u_code or u_code == 'nan': u_code = 'pcs'
-        
         cursor.execute("SELECT id FROM units WHERE code = ?", (u_code,))
         u_row = cursor.fetchone()
         if u_row:
@@ -359,10 +341,8 @@ def import_mrpeasy_items(df):
             cursor.execute("INSERT INTO units (code, name) VALUES (?, ?)", (u_code, u_code))
             unit_id = cursor.lastrowid
 
-        # Warehouse / Storage Location
         w_name = str(row.get('default storage location', row.get('storage location', row.get('location', 'Main Warehouse')))).strip()
         if not w_name or w_name == 'nan': w_name = 'Main Warehouse'
-        
         cursor.execute("SELECT id FROM warehouses WHERE name = ?", (w_name,))
         w_row = cursor.fetchone()
         if w_row:
@@ -372,7 +352,6 @@ def import_mrpeasy_items(df):
             cursor.execute("INSERT INTO warehouses (code, name, location_type) VALUES (?, ?, ?)", (w_code, w_name, 'Internal Warehouse'))
             warehouse_id = cursor.lastrowid
 
-        # Supplier / Vendor Mapping
         v_name = str(row.get('vendor name', '')).strip()
         supplier_id = None
         if v_name and v_name != 'nan':
@@ -384,7 +363,6 @@ def import_mrpeasy_items(df):
                 cursor.execute("INSERT INTO suppliers (code, name) VALUES (?, ?)", (f"SUP-{v_name[:5].upper()}", v_name))
                 supplier_id = cursor.lastrowid
 
-        # Numeric Fields
         try: price = float(row.get('cost', row.get('cost price', 0)))
         except: price = 0.0
 
@@ -422,6 +400,15 @@ def import_mrpeasy_items(df):
     conn.close()
     return imported_count, updated_count
 
+# SAFE FLOAT PARSER TO PREVENT VALUE ERRORS
+def safe_float(val):
+    if val in (None, "", "nan", "NaN"): 
+        return 0.0
+    try:
+        return float(val)
+    except:
+        return 0.0
+
 # CALLBACK FUNCTIONS FOR RESETTING FILTERS
 def reset_raw_filters_callback():
     st.session_state["f_raw_code"] = ""
@@ -445,13 +432,12 @@ query_params = st.query_params
 active_page = query_params.get("page", "Home")
 active_subtab = query_params.get("subtab", "Raw_Materials")
 
-# 4. Aqua Minimalist Styling With 3D Big Buttons
+# 4. Aqua Minimalist Styling
 st.markdown("""
 <style>
     .stApp { background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     [data-testid="stSidebar"] { display: none; }
 
-    /* Header Bar */
     .top-header {
         background: linear-gradient(135deg, #0284c7 0%, #06b6d4 100%);
         color: #ffffff;
@@ -465,7 +451,6 @@ st.markdown("""
     }
     .top-header h3 { margin: 0; font-size: 20px; font-weight: 800; color: #ffffff; }
 
-    /* Navigation Bar */
     .mrp-nav-bar {
         display: flex;
         background-color: #f1f5f9;
@@ -499,11 +484,6 @@ st.markdown("""
         color: #0284c7;
     }
 
-    .mrp-nav-item:active {
-        transform: translateY(2px);
-        box-shadow: 0 2px 0 #0284c7, 0 3px 4px rgba(0, 0, 0, 0.1);
-    }
-
     .mrp-nav-active {
         background: linear-gradient(180deg, #0284c7 0%, #0369a1 100%) !important;
         color: #ffffff !important;
@@ -511,7 +491,6 @@ st.markdown("""
         box-shadow: 0 4px 0 #075985, 0 6px 10px rgba(2, 132, 199, 0.3) !important;
     }
 
-    /* Sub-tabs with 3D effect */
     .mrp-subtabs {
         display: flex;
         gap: 12px;
@@ -547,7 +526,6 @@ st.markdown("""
         box-shadow: 0 3px 0 #0369a1, 0 4px 8px rgba(14, 165, 233, 0.25) !important;
     }
 
-    /* KPI Metric Cards */
     .stock-kpi-grid {
         display: grid;
         grid-template-columns: repeat(4, 1fr);
@@ -586,7 +564,6 @@ st.markdown("""
         text-transform: uppercase;
     }
 
-    /* Table Filter Box Container */
     .filter-panel {
         background-color: #ffffff;
         border: 1px solid #e2e8f0;
@@ -596,7 +573,6 @@ st.markdown("""
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
     }
 
-    /* Launchpad Cards */
     .launchpad-grid {
         display: grid;
         grid-template-columns: repeat(4, 1fr);
@@ -658,7 +634,7 @@ st.markdown(f"""
 
 conn = get_db()
 
-# DIALOG MODAL POP-UP PENTRU ADĂUGARE DINAMICĂ ELEMENTE
+# DIALOG MODAL POP-UP FOR ADDING NEW ITEM
 @st.dialog("➕ Add New Item to Stock")
 def add_new_item_dialog():
     st.subheader("Step 1: Select Item Type & Category")
@@ -682,7 +658,7 @@ def add_new_item_dialog():
                 category = st.selectbox("Category *", ["FINISHED GOOD", "SUBASSEMBLY"])
 
             uniq_code = st.text_input("Uniq Code (Auto-Generated) *", value=auto_uniq)
-            code = st.text_input("Part No. / Item Code *", value=auto_uniq)
+            code = st.text_input("Part No. / Original Code *", value=auto_uniq)
             name = st.text_input("Part Description / Name *", placeholder="e.g. Teava Rotunda FI 48.3x4 mm")
             
             df_u_opts = pd.read_sql_query("SELECT id, code, name FROM units ORDER BY code", conn)
@@ -744,7 +720,6 @@ def edit_item_dialog(item_id):
     row = cursor.fetchone()
     
     if row:
-        # Map DB row fields
         i_uniq = row[1] if row[1] else ""
         i_code = row[2] if row[2] else ""
         i_name = row[3] if row[3] else ""
@@ -753,21 +728,21 @@ def edit_item_dialog(item_id):
         i_supp_id = row[6]
         i_unit_id = row[7]
         i_wh_id = row[8]
-        i_pprice = float(row[9]) if row[9] else 0.0
-        i_sprice = float(row[10]) if row[10] else 0.0
-        i_sweight = float(row[11]) if row[11] else 0.0
+        i_pprice = safe_float(row[9])
+        i_sprice = safe_float(row[10])
+        i_sweight = safe_float(row[11])
         i_wunit = row[12] if row[12] else "kg"
-        i_stock = float(row[13]) if row[13] else 0.0
-        i_minstock = float(row[14]) if row[14] else 0.0
+        i_stock = safe_float(row[13])
+        i_minstock = safe_float(row[14])
 
-        st.caption(f"Editing Item ID: #{item_id} | Uniq Code: **{i_uniq}**")
+        st.caption(f"Editing Item ID: #{item_id} | Category: **{i_cat}**")
 
         with st.form("edit_item_form"):
             col1, col2 = st.columns(2)
             
             with col1:
                 e_uniq = st.text_input("Uniq Code *", value=i_uniq)
-                e_code = st.text_input("Part No. / Item Code *", value=i_code)
+                e_code = st.text_input("Part No. / Original Code *", value=i_code)
                 e_name = st.text_input("Part Description / Name *", value=i_name)
                 
                 if i_cat == "RAW MATERIAL":
@@ -870,13 +845,11 @@ if active_page == "Home":
 # ==========================================
 elif active_page == "Stock":
     
-    # Calculate Synthetic KPIs
     raw_count = conn.cursor().execute("SELECT COUNT(*) FROM stock_items WHERE category = 'RAW MATERIAL'").fetchone()[0]
     buy_count = conn.cursor().execute("SELECT COUNT(*) FROM stock_items WHERE category = 'BUY PART'").fetchone()[0]
     finished_count = conn.cursor().execute("SELECT COUNT(*) FROM stock_items WHERE category IN ('FINISHED GOOD', 'SUBASSEMBLY')").fetchone()[0]
     low_stock_count = conn.cursor().execute("SELECT COUNT(*) FROM stock_items WHERE current_stock <= min_stock AND min_stock > 0").fetchone()[0]
 
-    # Synthetic Metric Bar
     st.markdown(f"""
     <div class="stock-kpi-grid">
         <div class="stock-kpi-card">
@@ -910,7 +883,6 @@ elif active_page == "Stock":
     </div>
     """, unsafe_allow_html=True)
 
-    # Sub-tabs Configuration
     subtabs = [
         ("Raw_Materials", "📄 Raw Materials"),
         ("Buy_Parts", "⚙️ Buy Parts"),
@@ -956,7 +928,7 @@ elif active_page == "Stock":
 
         st.write("")
 
-        # FETCH DYNAMIC FILTER OPTIONS
+        # DYNAMIC FILTER OPTIONS
         supplier_options = ["All Suppliers"] + [r[0] for r in conn.cursor().execute("SELECT DISTINCT s.name FROM stock_items si JOIN suppliers s ON si.supplier_id = s.id WHERE si.category = 'RAW MATERIAL' AND s.name IS NOT NULL ORDER BY s.name").fetchall()]
         uom_options = ["All UoMs"] + [r[0] for r in conn.cursor().execute("SELECT DISTINCT u.code FROM stock_items si JOIN units u ON si.unit_id = u.id WHERE si.category = 'RAW MATERIAL' AND u.code IS NOT NULL ORDER BY u.code").fetchall()]
 
@@ -986,19 +958,17 @@ elif active_page == "Stock":
 
         st.markdown('</div>', unsafe_allow_html=True)
 
-        # BUILD DYNAMIC SQL QUERY BASED ON FILTERS
         q_raw = """
             SELECT 
                 si.id as ID,
                 si.uniq_code as 'Uniq Code',
-                si.code as 'Part No.',
+                si.code as 'Original Part No.',
                 si.name as 'Part Description',
                 si.sub_group as 'Main Sub-Group',
                 s.name as 'Preferred Supplier',
                 u.code as 'UoM',
-                si.specific_weight as 'Spec. Weight (kg/UoM)',
+                si.specific_weight as 'Spec. Weight',
                 si.purchase_price as 'Purchase Price (€)',
-                si.selling_price as 'Selling Price (€)',
                 si.current_stock as 'In Stock',
                 si.min_stock as 'Reorder Point'
             FROM stock_items si
@@ -1033,27 +1003,31 @@ elif active_page == "Stock":
 
         df_raw = pd.read_sql_query(q_raw, conn, params=params_raw)
         
-        # Display Table with Actions Column
-        col_tb, col_act = st.columns([9.2, 0.8])
-        with col_tb:
-            st.dataframe(
-                df_raw, 
-                use_container_width=True, 
-                hide_index=True,
-                column_config={
-                    "Uniq Code": st.column_config.TextColumn("Uniq Code", help="Generated Unique Item Identifier"),
-                    "Purchase Price (€)": st.column_config.NumberColumn("Purchase Price (€)", format="%.2f €"),
-                    "Selling Price (€)": st.column_config.NumberColumn("Selling Price (€)", format="%.2f €"),
-                    "Spec. Weight (kg/UoM)": st.column_config.NumberColumn("Spec. Weight", format="%.2f kg"),
-                    "In Stock": st.column_config.NumberColumn("In Stock", format="%.2f"),
-                    "Reorder Point": st.column_config.NumberColumn("Reorder Point", format="%.2f")
-                }
-            )
-        with col_act:
-            st.caption("Action")
-            for idx, r in df_raw.iterrows():
-                if st.button("✏️", key=f"edit_raw_{r['ID']}", help="Edit Item Details"):
-                    edit_item_dialog(r['ID'])
+        # EDIT ITEM SELECTOR (ABOVE TABLE)
+        col_edit1, col_edit2 = st.columns([3, 9])
+        with col_edit1:
+            raw_options = ["-- Select Item to Edit --"] + (df_raw['Uniq Code'].astype(str) + " - " + df_raw['Part Description'].astype(str)).tolist()
+            edit_target = st.selectbox("✏️ Edit / Delete an Item:", raw_options, key="edit_raw_sel")
+        with col_edit2:
+            st.write("")
+            st.write("")
+            if edit_target != "-- Select Item to Edit --":
+                target_uniq = edit_target.split(" - ")[0]
+                target_id = int(df_raw[df_raw['Uniq Code'] == target_uniq]['ID'].iloc[0])
+                if st.button("Open Edit Panel", type="primary", key="btn_edit_raw"):
+                    edit_item_dialog(target_id)
+
+        st.dataframe(
+            df_raw, 
+            use_container_width=True, 
+            hide_index=True,
+            column_config={
+                "Purchase Price (€)": st.column_config.NumberColumn("Purchase Price (€)", format="%.2f €"),
+                "Spec. Weight": st.column_config.NumberColumn("Spec. Weight", format="%.2f"),
+                "In Stock": st.column_config.NumberColumn("In Stock", format="%.2f"),
+                "Reorder Point": st.column_config.NumberColumn("Reorder Point", format="%.2f")
+            }
+        )
 
     # --- TAB 2: BUY PARTS ---
     elif active_subtab == "Buy_Parts":
@@ -1067,7 +1041,6 @@ elif active_page == "Stock":
 
         st.write("")
 
-        # BUY PARTS FILTER BAR AT TOP
         buy_suppliers = ["All Suppliers"] + [r[0] for r in conn.cursor().execute("SELECT DISTINCT s.name FROM stock_items si JOIN suppliers s ON si.supplier_id = s.id WHERE si.category = 'BUY PART' AND s.name IS NOT NULL ORDER BY s.name").fetchall()]
 
         st.markdown('<div class="filter-panel">', unsafe_allow_html=True)
@@ -1093,13 +1066,11 @@ elif active_page == "Stock":
             SELECT 
                 si.id as ID,
                 si.uniq_code as 'Uniq Code',
-                si.code as 'Part No.',
+                si.code as 'Original Part No.',
                 si.name as 'Part Description',
                 s.name as 'Preferred Supplier',
                 u.code as 'UoM',
-                w.name as 'Warehouse',
                 si.purchase_price as 'Purchase Price (€)',
-                si.selling_price as 'Selling Price (€)',
                 si.current_stock as 'In Stock'
             FROM stock_items si
             LEFT JOIN suppliers s ON si.supplier_id = s.id
@@ -1123,14 +1094,21 @@ elif active_page == "Stock":
 
         df_buy = pd.read_sql_query(q_buy, conn, params=params_buy)
         
-        col_tb, col_act = st.columns([9.2, 0.8])
-        with col_tb:
-            st.dataframe(df_buy, use_container_width=True, hide_index=True)
-        with col_act:
-            st.caption("Action")
-            for idx, r in df_buy.iterrows():
-                if st.button("✏️", key=f"edit_buy_{r['ID']}", help="Edit Item Details"):
-                    edit_item_dialog(r['ID'])
+        # EDIT ITEM SELECTOR (ABOVE TABLE)
+        col_edit1, col_edit2 = st.columns([3, 9])
+        with col_edit1:
+            buy_options = ["-- Select Item to Edit --"] + (df_buy['Uniq Code'].astype(str) + " - " + df_buy['Part Description'].astype(str)).tolist()
+            edit_target = st.selectbox("✏️ Edit / Delete an Item:", buy_options, key="edit_buy_sel")
+        with col_edit2:
+            st.write("")
+            st.write("")
+            if edit_target != "-- Select Item to Edit --":
+                target_uniq = edit_target.split(" - ")[0]
+                target_id = int(df_buy[df_buy['Uniq Code'] == target_uniq]['ID'].iloc[0])
+                if st.button("Open Edit Panel", type="primary", key="btn_edit_buy"):
+                    edit_item_dialog(target_id)
+
+        st.dataframe(df_buy, use_container_width=True, hide_index=True)
 
     # --- TAB 3: FINISHED GOODS ---
     elif active_subtab == "Finished_Goods":
@@ -1144,7 +1122,6 @@ elif active_page == "Stock":
 
         st.write("")
 
-        # FINISHED GOODS FILTER BAR AT TOP
         st.markdown('<div class="filter-panel">', unsafe_allow_html=True)
         col_fg1, col_fg2, col_fg3, col_fg4 = st.columns([3, 4, 3, 2])
 
@@ -1168,11 +1145,10 @@ elif active_page == "Stock":
             SELECT 
                 si.id as ID,
                 si.uniq_code as 'Uniq Code',
-                si.code as 'Product Code',
+                si.code as 'Original Product Code',
                 si.name as 'Product Description',
                 si.category as 'Category',
                 u.code as 'UoM',
-                w.name as 'Warehouse',
                 si.selling_price as 'Selling Price (€)',
                 si.current_stock as 'In Stock'
             FROM stock_items si
@@ -1196,14 +1172,21 @@ elif active_page == "Stock":
 
         df_fin = pd.read_sql_query(q_fin, conn, params=params_fin)
         
-        col_tb, col_act = st.columns([9.2, 0.8])
-        with col_tb:
-            st.dataframe(df_fin, use_container_width=True, hide_index=True)
-        with col_act:
-            st.caption("Action")
-            for idx, r in df_fin.iterrows():
-                if st.button("✏️", key=f"edit_fg_{r['ID']}", help="Edit Item Details"):
-                    edit_item_dialog(r['ID'])
+        # EDIT ITEM SELECTOR (ABOVE TABLE)
+        col_edit1, col_edit2 = st.columns([3, 9])
+        with col_edit1:
+            fg_options = ["-- Select Item to Edit --"] + (df_fin['Uniq Code'].astype(str) + " - " + df_fin['Product Description'].astype(str)).tolist()
+            edit_target = st.selectbox("✏️ Edit / Delete an Item:", fg_options, key="edit_fg_sel")
+        with col_edit2:
+            st.write("")
+            st.write("")
+            if edit_target != "-- Select Item to Edit --":
+                target_uniq = edit_target.split(" - ")[0]
+                target_id = int(df_fin[df_fin['Uniq Code'] == target_uniq]['ID'].iloc[0])
+                if st.button("Open Edit Panel", type="primary", key="btn_edit_fg"):
+                    edit_item_dialog(target_id)
+
+        st.dataframe(df_fin, use_container_width=True, hide_index=True)
 
     # --- TAB 4: SUPPLIERS ---
     elif active_subtab == "Suppliers":
