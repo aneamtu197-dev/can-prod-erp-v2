@@ -644,30 +644,32 @@ st.markdown(f"""
 
 conn = get_db()
 
-# DIALOG MODAL POP-UP FOR ADDING NEW ITEM
+# DIALOG MODAL POP-UP FOR ADDING NEW ITEM DYNAMICALLY
 @st.dialog("➕ Add New Item to Stock")
 def add_new_item_dialog():
     st.subheader("Step 1: Select Item Type & Category")
     item_type = st.selectbox("Item Type *", ["Raw Material", "Buy Part", "Finished Good / Subassembly"])
     
+    # 1. EXTRACT SUB-GROUP OUTSIDE THE FORM SO IT TRIGGERS A RERUN LIVE
+    if item_type == "Raw Material":
+        sub_group = st.selectbox("Main Sub-Group *", ["Tabla", "Teava", "Europrofile", "Raw Materials Diverse"])
+        auto_uniq = generate_unique_item_code(conn, "RAW MATERIAL", sub_group)
+        category = "RAW MATERIAL"
+    elif item_type == "Buy Part":
+        sub_group = "Buy Parts"
+        auto_uniq = generate_unique_item_code(conn, "BUY PART")
+        category = "BUY PART"
+    else:
+        sub_group = "Finished Goods"
+        auto_uniq = generate_unique_item_code(conn, "FINISHED GOOD")
+        category = st.selectbox("Category *", ["FINISHED GOOD", "SUBASSEMBLY"])
+
+    # 2. OPEN THE FORM FOR THE REST OF THE FIELDS
     with st.form("add_item_dynamic_form"):
+        st.subheader("Step 2: Item Characteristics & Specifications")
         col1, col2 = st.columns(2)
         
         with col1:
-            if item_type == "Raw Material":
-                sub_group = st.selectbox("Main Sub-Group *", ["Tabla", "Teava", "Europrofile", "Raw Materials Diverse"])
-                auto_uniq = generate_unique_item_code(conn, "RAW MATERIAL", sub_group)
-                category = "RAW MATERIAL"
-            elif item_type == "Buy Part":
-                sub_group = "Buy Parts"
-                auto_uniq = generate_unique_item_code(conn, "BUY PART")
-                category = "BUY PART"
-            else:
-                sub_group = "Finished Goods"
-                auto_uniq = generate_unique_item_code(conn, "FINISHED GOOD")
-                category = st.selectbox("Category *", ["FINISHED GOOD", "SUBASSEMBLY"])
-
-            # Render Unique Code as disabled/read-only to prevent user changes
             st.text_input("Uniq Code (Auto-Generated) *", value=auto_uniq, disabled=True)
             
             code = st.text_input("Part No. / Original Code *", value=auto_uniq)
@@ -728,7 +730,6 @@ def add_new_item_dialog():
 @st.dialog("✏️ Edit Item Details")
 def edit_item_dialog(item_id):
     cursor = conn.cursor()
-    # Explicit column selection to prevent index shifting bugs from ALTER TABLE
     cursor.execute("""
         SELECT uniq_code, code, name, category, sub_group, supplier_id, unit_id, warehouse_id, 
                purchase_price, selling_price, specific_weight, weight_unit, current_stock, min_stock 
@@ -758,7 +759,6 @@ def edit_item_dialog(item_id):
             col1, col2 = st.columns(2)
             
             with col1:
-                # Disabled Uniq Code field to prevent user edits
                 st.text_input("Uniq Code (Read-Only) *", value=i_uniq, disabled=True)
                 
                 e_code = st.text_input("Part No. / Original Code *", value=i_code)
@@ -864,13 +864,11 @@ if active_page == "Home":
 # ==========================================
 elif active_page == "Stock":
     
-    # Calculate Synthetic KPIs
     raw_count = conn.cursor().execute("SELECT COUNT(*) FROM stock_items WHERE category = 'RAW MATERIAL'").fetchone()[0]
     buy_count = conn.cursor().execute("SELECT COUNT(*) FROM stock_items WHERE category = 'BUY PART'").fetchone()[0]
     finished_count = conn.cursor().execute("SELECT COUNT(*) FROM stock_items WHERE category IN ('FINISHED GOOD', 'SUBASSEMBLY')").fetchone()[0]
     low_stock_count = conn.cursor().execute("SELECT COUNT(*) FROM stock_items WHERE current_stock <= min_stock AND min_stock > 0").fetchone()[0]
 
-    # Synthetic Metric Bar
     st.markdown(f"""
     <div class="stock-kpi-grid">
         <div class="stock-kpi-card">
@@ -904,7 +902,6 @@ elif active_page == "Stock":
     </div>
     """, unsafe_allow_html=True)
 
-    # Sub-tabs Configuration
     subtabs = [
         ("Raw_Materials", "📄 Raw Materials"),
         ("Buy_Parts", "⚙️ Buy Parts"),
@@ -950,37 +947,28 @@ elif active_page == "Stock":
 
         st.write("")
 
-        # FETCH DYNAMIC FILTER OPTIONS
         supplier_options = ["All Suppliers"] + [r[0] for r in conn.cursor().execute("SELECT DISTINCT s.name FROM stock_items si JOIN suppliers s ON si.supplier_id = s.id WHERE si.category = 'RAW MATERIAL' AND s.name IS NOT NULL ORDER BY s.name").fetchall()]
         uom_options = ["All UoMs"] + [r[0] for r in conn.cursor().execute("SELECT DISTINCT u.code FROM stock_items si JOIN units u ON si.unit_id = u.id WHERE si.category = 'RAW MATERIAL' AND u.code IS NOT NULL ORDER BY u.code").fetchall()]
 
-        # TABLE FILTER BAR AT TOP
         st.markdown('<div class="filter-panel">', unsafe_allow_html=True)
         col_f1, col_f2, col_f3, col_f4, col_f5, col_f6 = st.columns([2, 3, 2, 2, 1.5, 1.5])
 
         with col_f1:
             f_raw_code = st.text_input("Part No. / Uniq Code", key="f_raw_code", placeholder="Search Code...")
-
         with col_f2:
             f_raw_name = st.text_input("Part Description", key="f_raw_name", placeholder="Search Description...")
-
         with col_f3:
             f_raw_sub = st.selectbox("Sub-Group", ["All Sub-Groups", "Tabla", "Teava", "Europrofile", "Raw Materials Diverse"], key="f_raw_sub")
-
         with col_f4:
             f_raw_supp = st.selectbox("Preferred Supplier", supplier_options, key="f_raw_supp")
-
         with col_f5:
             f_raw_uom = st.selectbox("UoM", uom_options, key="f_raw_uom")
-
         with col_f6:
             st.write("")
             st.write("")
             st.button("🔄 Reset Filters", use_container_width=True, key="reset_raw_filters", on_click=reset_raw_filters_callback)
-
         st.markdown('</div>', unsafe_allow_html=True)
 
-        # BUILD DYNAMIC SQL QUERY BASED ON FILTERS
         q_raw = """
             SELECT 
                 si.id as ID,
@@ -1000,32 +988,25 @@ elif active_page == "Stock":
             WHERE si.category = 'RAW MATERIAL'
         """
         params_raw = []
-
         if f_raw_code:
             q_raw += " AND (si.code LIKE ? OR si.uniq_code LIKE ?)"
             params_raw.extend([f"%{f_raw_code}%", f"%{f_raw_code}%"])
-
         if f_raw_name:
             q_raw += " AND si.name LIKE ?"
             params_raw.append(f"%{f_raw_name}%")
-
         if f_raw_sub != "All Sub-Groups":
             q_raw += " AND si.sub_group = ?"
             params_raw.append(f_raw_sub)
-
         if f_raw_supp != "All Suppliers":
             q_raw += " AND s.name = ?"
             params_raw.append(f_raw_supp)
-
         if f_raw_uom != "All UoMs":
             q_raw += " AND u.code = ?"
             params_raw.append(f_raw_uom)
 
         q_raw += " ORDER BY si.sub_group, si.uniq_code"
-
         df_raw = pd.read_sql_query(q_raw, conn, params=params_raw)
         
-        # Interactive Table (Click to Edit)
         st.caption("💡 Click on any row below to edit the item details.")
         selection = st.dataframe(
             df_raw, 
@@ -1035,7 +1016,7 @@ elif active_page == "Stock":
             selection_mode="single-row",
             key="raw_items_table",
             column_config={
-                "ID": None, # Hides the ID column visually
+                "ID": None,
                 "Purchase Price (€)": st.column_config.NumberColumn("Purchase Price (€)", format="%.2f €"),
                 "Selling Price (€)": st.column_config.NumberColumn("Selling Price (€)", format="%.2f €"),
                 "Spec. Weight": st.column_config.NumberColumn("Spec. Weight", format="%.2f")
@@ -1066,18 +1047,14 @@ elif active_page == "Stock":
 
         with col_b1:
             f_buy_code = st.text_input("Part No. / Uniq Code", key="f_buy_code", placeholder="Search Code...")
-
         with col_b2:
             f_buy_name = st.text_input("Part Description", key="f_buy_name", placeholder="Search Description...")
-
         with col_b3:
             f_buy_supp = st.selectbox("Preferred Supplier", buy_suppliers, key="f_buy_supp")
-
         with col_b4:
             st.write("")
             st.write("")
             st.button("🔄 Reset Filters", use_container_width=True, key="reset_buy_filters", on_click=reset_buy_filters_callback)
-
         st.markdown('</div>', unsafe_allow_html=True)
 
         q_buy = """
@@ -1098,15 +1075,12 @@ elif active_page == "Stock":
             WHERE si.category = 'BUY PART'
         """
         params_buy = []
-
         if f_buy_code:
             q_buy += " AND (si.code LIKE ? OR si.uniq_code LIKE ?)"
             params_buy.extend([f"%{f_buy_code}%", f"%{f_buy_code}%"])
-
         if f_buy_name:
             q_buy += " AND si.name LIKE ?"
             params_buy.append(f"%{f_buy_name}%")
-
         if f_buy_supp != "All Suppliers":
             q_buy += " AND s.name = ?"
             params_buy.append(f_buy_supp)
@@ -1150,18 +1124,14 @@ elif active_page == "Stock":
 
         with col_fg1:
             f_fg_code = st.text_input("Product Code / Uniq Code", key="f_fg_code", placeholder="Search Code...")
-
         with col_fg2:
             f_fg_name = st.text_input("Product Description", key="f_fg_name", placeholder="Search Description...")
-
         with col_fg3:
             f_fg_cat = st.selectbox("Category", ["All Categories", "FINISHED GOOD", "SUBASSEMBLY"], key="f_fg_cat")
-
         with col_fg4:
             st.write("")
             st.write("")
             st.button("🔄 Reset Filters", use_container_width=True, key="reset_fg_filters", on_click=reset_fg_filters_callback)
-
         st.markdown('</div>', unsafe_allow_html=True)
 
         q_fin = """
@@ -1180,15 +1150,12 @@ elif active_page == "Stock":
             WHERE si.category IN ('FINISHED GOOD', 'SUBASSEMBLY')
         """
         params_fin = []
-
         if f_fg_code:
             q_fin += " AND (si.code LIKE ? OR si.uniq_code LIKE ?)"
             params_fin.extend([f"%{f_fg_code}%", f"%{f_fg_code}%"])
-
         if f_fg_name:
             q_fin += " AND si.name LIKE ?"
             params_fin.append(f"%{f_fg_name}%")
-
         if f_fg_cat != "All Categories":
             q_fin += " AND si.category = ?"
             params_fin.append(f_fg_cat)
