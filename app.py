@@ -447,7 +447,7 @@ def edit_customer_dialog(cust_id):
             if c_del.form_submit_button("🗑️ Delete", use_container_width=True):
                 cursor.execute("DELETE FROM customers WHERE id = ?", (cust_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
 
-# DIALOG MODALS FOR PRODUCT RECIPES (BOM & ROUTING)
+# DIALOG MODAL POP-UP FOR PRODUCT RECIPES (BOM & ROUTING)
 @st.dialog("➕ Create / Edit Product BOM Recipe", width="large")
 def manage_product_bom_dialog(selected_prod_id=None):
     conn_dialog = get_db()
@@ -1038,11 +1038,11 @@ elif active_page == "BOM":
                 col_a1, col_a2, _ = st.columns([2, 2, 8])
                 with col_a1:
                     if len(selected_ids) == 1:
-                        # Get stock item id
-                        cursor.execute("SELECT product_item_id FROM product_boms WHERE id = ?", (selected_ids[0],))
-                        p_item_id = cursor.fetchone()[0]
-                        if st.button("✏️ Edit Selected Recipe", use_container_width=True): 
-                            manage_product_bom_dialog(p_item_id)
+                        cursor_page = conn.cursor()
+                        cursor_page.execute("SELECT product_item_id FROM product_boms WHERE id = ?", (selected_ids[0],))
+                        p_row = cursor_page.fetchone()
+                        if p_row and st.button("✏️ Edit Selected Recipe", use_container_width=True): 
+                            manage_product_bom_dialog(p_row[0])
                 with col_a2:
                     if st.button("🗑️ Delete Selected Recipe", use_container_width=True): 
                         bulk_delete_boms_dialog(selected_ids)
