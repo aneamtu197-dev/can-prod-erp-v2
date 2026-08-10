@@ -607,7 +607,7 @@ def create_finished_product_dialog():
         else:
             st.warning("Te rugăm să introduci Part Description!")
 
-# DIALOG MODAL POP-UP FOR PRODUCT RECIPES (BOM & ROUTING) WITH FULL LINE EDITING
+# DIALOG MODAL POP-UP FOR PRODUCT RECIPES (BOM & ROUTING) WITH FULL LINE EDITING & PERFECT ALIGNMENT
 @st.dialog("➕ Edit Product BOM Recipe & Routing", width="large")
 def manage_product_bom_dialog(selected_prod_id=None):
     st.session_state["keep_bom_dialog_open"] = False
@@ -660,7 +660,7 @@ def manage_product_bom_dialog(selected_prod_id=None):
         mat_dict = {f"{r['uniq_code']} - {r['name']}": r['id'] for _, r in df_all_mat.iterrows()}
         mat_options_keys = list(mat_dict.keys())
 
-        # DISPLAY COMPLETED MATERIAL LINES AT THE TOP WITH FULL EDITING (ITEM + QTY + PRICE)
+        # DISPLAY COMPLETED MATERIAL LINES AT THE TOP WITH PERFECT VERTICAL ALIGNMENT
         q_bm = """
             SELECT bm.id as ID, bm.material_item_id, si.uniq_code as 'Code', si.name as 'Material Name', bm.quantity_required as 'Qty', u.code as 'UoM', bm.unit_cost as 'Price', bm.total_cost as 'Total Cost'
             FROM bom_materials bm
@@ -670,11 +670,10 @@ def manage_product_bom_dialog(selected_prod_id=None):
         """
         df_bm = pd.read_sql_query(q_bm, conn_dialog, params=[bom_id])
         if len(df_bm) > 0:
-            st.markdown("###### Current BOM Materials List (Fully Editable):")
+            st.markdown("###### Current BOM Materials List:")
             for _, r_m in df_bm.iterrows():
                 cm1, cm2, cm3, cm4, cm5 = st.columns([4, 2, 2, 2, 1])
                 
-                # Material Dropdown Change
                 curr_m_str = f"{r_m['Code']} - {r_m['Material Name']}"
                 curr_m_idx = mat_options_keys.index(curr_m_str) if curr_m_str in mat_options_keys else 0
                 edit_m_key = cm1.selectbox("Material Component", mat_options_keys, index=curr_m_idx, key=f"edit_mitem_{r_m['ID']}")
@@ -682,17 +681,24 @@ def manage_product_bom_dialog(selected_prod_id=None):
                 edit_m_qty = cm2.number_input(f"Qty ({r_m['UoM']})", min_value=0.001, value=float(r_m['Qty']), step=0.1, key=f"edit_mqty_{r_m['ID']}")
                 edit_m_cost = cm3.number_input("Unit Price (€)", min_value=0.0, value=float(r_m['Price']), step=0.1, key=f"edit_mcost_{r_m['ID']}")
                 new_tot_m = float(edit_m_qty * edit_m_cost)
+                
+                # Perfect Alignment for Total (€) Column
+                cm4.caption("Total (€)")
                 cm4.write(f"**{new_tot_m:.2f} €**")
                 
+                # Perfect Alignment for Action Buttons
+                cm5.caption("Action")
+                c_save_m, c_del_m = cm5.columns(2)
                 selected_m_id = mat_dict[edit_m_key]
-                if (selected_m_id != r_m['material_item_id'] or edit_m_qty != float(r_m['Qty']) or edit_m_cost != float(r_m['Price'])) and cm5.button("💾", key=f"save_m_{r_m['ID']}"):
+                
+                if (selected_m_id != r_m['material_item_id'] or edit_m_qty != float(r_m['Qty']) or edit_m_cost != float(r_m['Price'])) and c_save_m.button("💾", key=f"save_m_{r_m['ID']}"):
                     cursor.execute("UPDATE bom_materials SET material_item_id = ?, quantity_required = ?, unit_cost = ?, total_cost = ? WHERE id = ?", (selected_m_id, edit_m_qty, edit_m_cost, new_tot_m, r_m['ID']))
                     conn_dialog.commit()
                     st.session_state["active_bom_dialog_prod_id"] = target_prod_id
                     st.session_state["keep_bom_dialog_open"] = True
                     st.rerun()
 
-                if cm5.button("🗑️", key=f"del_mat_{r_m['ID']}"):
+                if c_del_m.button("🗑️", key=f"del_mat_{r_m['ID']}"):
                     cursor.execute("DELETE FROM bom_materials WHERE id = ?", (r_m['ID'],))
                     conn_dialog.commit()
                     st.session_state["active_bom_dialog_prod_id"] = target_prod_id
@@ -700,7 +706,7 @@ def manage_product_bom_dialog(selected_prod_id=None):
                     st.rerun()
             st.divider()
 
-        # INPUT FORM AT THE BOTTOM (RESETS DYNAMICALLY)
+        # INPUT FORM AT THE BOTTOM
         mat_options = [""] + mat_options_keys
         ver_m = st.session_state["bom_select_version"]
         
@@ -731,7 +737,7 @@ def manage_product_bom_dialog(selected_prod_id=None):
         op_dict = {f"{r['uniq_code']} - {r['name']}": r['id'] for _, r in df_all_ops.iterrows()}
         op_options_keys = list(op_dict.keys())
         
-        # DISPLAY COMPLETED OPERATION LINES AT THE TOP WITH FULL EDITING (OPERATION + DURATION + RATE)
+        # DISPLAY COMPLETED OPERATION LINES AT THE TOP WITH PERFECT ALIGNMENT
         q_bo = """
             SELECT bo.id as ID, bo.step_number as Step, bo.operation_id, o.uniq_code as 'Op Code', o.name as 'Operation Name', o.cost_unit as 'Unit', bo.duration_hours as 'Duration', bo.rate_applied as 'Rate', bo.total_cost as 'Total Cost'
             FROM bom_operations bo
@@ -741,12 +747,11 @@ def manage_product_bom_dialog(selected_prod_id=None):
         """
         df_bo = pd.read_sql_query(q_bo, conn_dialog, params=[bom_id])
         if len(df_bo) > 0:
-            st.markdown("###### Current Routing Operations List (Fully Editable):")
+            st.markdown("###### Current Routing Operations List:")
             for idx_o, r_o in df_bo.iterrows():
                 co_step, co_op, co_dur, co_rate, co_tot, co_actions = st.columns([1, 3.5, 2, 2, 2, 2])
                 co_step.write(f"**Step {r_o['Step']}**")
                 
-                # Operation Dropdown Change
                 curr_op_str = f"{r_o['Op Code']} - {r_o['Operation Name']}"
                 curr_op_idx = op_options_keys.index(curr_op_str) if curr_op_str in op_options_keys else 0
                 edit_o_key = co_op.selectbox("Operation Step", op_options_keys, index=curr_op_idx, key=f"edit_opitem_{r_o['ID']}")
@@ -754,9 +759,13 @@ def manage_product_bom_dialog(selected_prod_id=None):
                 edit_o_dur = co_dur.number_input(f"Qty ({r_o['Unit']})", min_value=0.01, value=float(r_o['Duration']), step=0.1, key=f"edit_odur_{r_o['ID']}")
                 edit_o_rate = co_rate.number_input("Rate (€)", min_value=0.0, value=float(r_o['Rate']), step=0.5, key=f"edit_orate_{r_o['ID']}")
                 new_tot_o = float(edit_o_dur * edit_o_rate)
+                
+                # Perfect Alignment for Total (€) Column
+                co_tot.caption("Total (€)")
                 co_tot.write(f"**{new_tot_o:.2f} €**")
                 
                 selected_op_id = op_dict[edit_o_key]
+                co_actions.caption("Actions")
                 c_save_o, c_up, c_down, c_del_o = co_actions.columns(4)
                 
                 if (selected_op_id != r_o['operation_id'] or edit_o_dur != float(r_o['Duration']) or edit_o_rate != float(r_o['Rate'])) and c_save_o.button("💾", key=f"save_o_{r_o['ID']}"):
@@ -792,7 +801,7 @@ def manage_product_bom_dialog(selected_prod_id=None):
                     st.rerun()
             st.divider()
 
-        # INPUT FORM AT THE BOTTOM (RESETS DYNAMICALLY)
+        # INPUT FORM AT THE BOTTOM
         op_options = [""] + op_options_keys
         ver_o = st.session_state["bom_select_version"]
         
