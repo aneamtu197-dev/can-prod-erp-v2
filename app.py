@@ -85,7 +85,7 @@ def init_custom_db():
     # Populate Default Units
     cursor.execute("SELECT COUNT(*) FROM units")
     if cursor.fetchone()[0] == 0:
-        for c, n in [('Ml', 'Metri Liniari'), ('kg', 'Kilograme'), ('pcs', 'Pieces'), ('m2', 'Square Meters'), ('l', 'Liters')]:
+        for c, n in [('Ml', 'Linear Meters'), ('kg', 'Kilograms'), ('pcs', 'Pieces'), ('m2', 'Square Meters'), ('l', 'Liters')]:
             cursor.execute("INSERT INTO units (code, name) VALUES (?, ?)", (c, n))
 
     # Populate Default Warehouses
@@ -476,6 +476,16 @@ st.markdown("""
         text-transform: uppercase;
     }
 
+    /* Table Filter Box Container */
+    .filter-panel {
+        background-color: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 16px 20px 10px 20px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+    }
+
     /* Launchpad Cards */
     .launchpad-grid {
         display: grid;
@@ -627,7 +637,7 @@ if active_page == "Home":
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. STOCK MODULE (SYNTHESIZED & STYLED)
+# 2. STOCK MODULE (SYNTHESIZED & STYLED WITH TOP TABLE FILTERS)
 # ==========================================
 elif active_page == "Stock":
     
@@ -716,14 +726,44 @@ elif active_page == "Stock":
                         st.error(f"Import Error: {e}")
 
         st.write("")
-        
-        # Sub-Group Filter & Search
-        f1, f2 = st.columns([6, 4])
-        with f1:
-            search_raw = st.text_input("🔍 Search Raw Materials by Part No. or Description", placeholder="Type to search...", label_visibility="collapsed")
-        with f2:
-            filter_sub = st.selectbox("Filter Sub-Group", ["All Sub-Groups", "Tabla", "Teava", "Europrofile", "Raw Materials Diverse"], label_visibility="collapsed")
 
+        # FETCH DYNAMIC FILTER OPTIONS
+        supplier_options = ["All Suppliers"] + [r[0] for r in conn.cursor().execute("SELECT DISTINCT s.name FROM stock_items si JOIN suppliers s ON si.supplier_id = s.id WHERE si.category = 'RAW MATERIAL' AND s.name IS NOT NULL ORDER BY s.name").fetchall()]
+        uom_options = ["All UoMs"] + [r[0] for r in conn.cursor().execute("SELECT DISTINCT u.code FROM stock_items si JOIN units u ON si.unit_id = u.id WHERE si.category = 'RAW MATERIAL' AND u.code IS NOT NULL ORDER BY u.code").fetchall()]
+
+        # TABLE FILTER BAR AT TOP
+        st.markdown('<div class="filter-panel">', unsafe_allow_html=True)
+        col_f1, col_f2, col_f3, col_f4, col_f5, col_f6 = st.columns([2, 3, 2, 2, 1.5, 1.5])
+
+        with col_f1:
+            f_raw_code = st.text_input("Part No.", key="f_raw_code", placeholder="Search Part No...")
+
+        with col_f2:
+            f_raw_name = st.text_input("Part Description", key="f_raw_name", placeholder="Search Description...")
+
+        with col_f3:
+            f_raw_sub = st.selectbox("Sub-Group", ["All Sub-Groups", "Tabla", "Teava", "Europrofile", "Raw Materials Diverse"], key="f_raw_sub")
+
+        with col_f4:
+            f_raw_supp = st.selectbox("Preferred Supplier", supplier_options, key="f_raw_supp")
+
+        with col_f5:
+            f_raw_uom = st.selectbox("UoM", uom_options, key="f_raw_uom")
+
+        with col_f6:
+            st.write("")
+            st.write("")
+            if st.button("🔄 Reset Filters", use_container_width=True, key="reset_raw_filters"):
+                st.session_state["f_raw_code"] = ""
+                st.session_state["f_raw_name"] = ""
+                st.session_state["f_raw_sub"] = "All Sub-Groups"
+                st.session_state["f_raw_supp"] = "All Suppliers"
+                st.session_state["f_raw_uom"] = "All UoMs"
+                st.rerun()
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # BUILD DYNAMIC SQL QUERY BASED ON FILTERS
         q_raw = """
             SELECT 
                 si.id as ID,
@@ -744,12 +784,26 @@ elif active_page == "Stock":
             WHERE si.category = 'RAW MATERIAL'
         """
         params_raw = []
-        if search_raw:
-            q_raw += " AND (si.code LIKE ? OR si.name LIKE ?)"
-            params_raw.extend([f"%{search_raw}%", f"%{search_raw}%"])
-        if filter_sub != "All Sub-Groups":
+
+        if f_raw_code:
+            q_raw += " AND si.code LIKE ?"
+            params_raw.append(f"%{f_raw_code}%")
+
+        if f_raw_name:
+            q_raw += " AND si.name LIKE ?"
+            params_raw.append(f"%{f_raw_name}%")
+
+        if f_raw_sub != "All Sub-Groups":
             q_raw += " AND si.sub_group = ?"
-            params_raw.append(filter_sub)
+            params_raw.append(f_raw_sub)
+
+        if f_raw_supp != "All Suppliers":
+            q_raw += " AND s.name = ?"
+            params_raw.append(f_raw_supp)
+
+        if f_raw_uom != "All UoMs":
+            q_raw += " AND u.code = ?"
+            params_raw.append(f_raw_uom)
 
         q_raw += " ORDER BY si.sub_group, si.code"
 
@@ -811,7 +865,32 @@ elif active_page == "Stock":
                                 st.error(f"Error: {e}")
 
         st.write("")
-        search_buy = st.text_input("🔍 Search Buy Parts", placeholder="Type to filter...", label_visibility="collapsed")
+
+        # BUY PARTS FILTER BAR AT TOP
+        buy_suppliers = ["All Suppliers"] + [r[0] for r in conn.cursor().execute("SELECT DISTINCT s.name FROM stock_items si JOIN suppliers s ON si.supplier_id = s.id WHERE si.category = 'BUY PART' AND s.name IS NOT NULL ORDER BY s.name").fetchall()]
+
+        st.markdown('<div class="filter-panel">', unsafe_allow_html=True)
+        col_b1, col_b2, col_b3, col_b4 = st.columns([3, 4, 3, 2])
+
+        with col_b1:
+            f_buy_code = st.text_input("Part No.", key="f_buy_code", placeholder="Search Part No...")
+
+        with col_b2:
+            f_buy_name = st.text_input("Part Description", key="f_buy_name", placeholder="Search Description...")
+
+        with col_b3:
+            f_buy_supp = st.selectbox("Preferred Supplier", buy_suppliers, key="f_buy_supp")
+
+        with col_b4:
+            st.write("")
+            st.write("")
+            if st.button("🔄 Reset Filters", use_container_width=True, key="reset_buy_filters"):
+                st.session_state["f_buy_code"] = ""
+                st.session_state["f_buy_name"] = ""
+                st.session_state["f_buy_supp"] = "All Suppliers"
+                st.rerun()
+
+        st.markdown('</div>', unsafe_allow_html=True)
 
         q_buy = """
             SELECT 
@@ -831,9 +910,18 @@ elif active_page == "Stock":
             WHERE si.category = 'BUY PART'
         """
         params_buy = []
-        if search_buy:
-            q_buy += " AND (si.code LIKE ? OR si.name LIKE ?)"
-            params_buy.extend([f"%{search_buy}%", f"%{search_buy}%"])
+
+        if f_buy_code:
+            q_buy += " AND si.code LIKE ?"
+            params_buy.append(f"%{f_buy_code}%")
+
+        if f_buy_name:
+            q_buy += " AND si.name LIKE ?"
+            params_buy.append(f"%{f_buy_name}%")
+
+        if f_buy_supp != "All Suppliers":
+            q_buy += " AND s.name = ?"
+            params_buy.append(f_buy_supp)
 
         df_buy = pd.read_sql_query(q_buy, conn, params=params_buy)
         st.dataframe(df_buy, use_container_width=True, hide_index=True)
@@ -878,7 +966,30 @@ elif active_page == "Stock":
                                 st.error(f"Error: {e}")
 
         st.write("")
-        search_fin = st.text_input("🔍 Search Finished Goods", placeholder="Type to filter...", label_visibility="collapsed")
+
+        # FINISHED GOODS FILTER BAR AT TOP
+        st.markdown('<div class="filter-panel">', unsafe_allow_html=True)
+        col_fg1, col_fg2, col_fg3, col_fg4 = st.columns([3, 4, 3, 2])
+
+        with col_fg1:
+            f_fg_code = st.text_input("Product Code", key="f_fg_code", placeholder="Search Code...")
+
+        with col_fg2:
+            f_fg_name = st.text_input("Product Description", key="f_fg_name", placeholder="Search Description...")
+
+        with col_fg3:
+            f_fg_cat = st.selectbox("Category", ["All Categories", "FINISHED GOOD", "SUBASSEMBLY"], key="f_fg_cat")
+
+        with col_fg4:
+            st.write("")
+            st.write("")
+            if st.button("🔄 Reset Filters", use_container_width=True, key="reset_fg_filters"):
+                st.session_state["f_fg_code"] = ""
+                st.session_state["f_fg_name"] = ""
+                st.session_state["f_fg_cat"] = "All Categories"
+                st.rerun()
+
+        st.markdown('</div>', unsafe_allow_html=True)
 
         q_fin = """
             SELECT 
@@ -896,9 +1007,18 @@ elif active_page == "Stock":
             WHERE si.category IN ('FINISHED GOOD', 'SUBASSEMBLY')
         """
         params_fin = []
-        if search_fin:
-            q_fin += " AND (si.code LIKE ? OR si.name LIKE ?)"
-            params_fin.extend([f"%{search_fin}%", f"%{search_fin}%"])
+
+        if f_fg_code:
+            q_fin += " AND si.code LIKE ?"
+            params_fin.append(f"%{f_fg_code}%")
+
+        if f_fg_name:
+            q_fin += " AND si.name LIKE ?"
+            params_fin.append(f"%{f_fg_name}%")
+
+        if f_fg_cat != "All Categories":
+            q_fin += " AND si.category = ?"
+            params_fin.append(f_fg_cat)
 
         df_fin = pd.read_sql_query(q_fin, conn, params=params_fin)
         st.dataframe(df_fin, use_container_width=True, hide_index=True)
