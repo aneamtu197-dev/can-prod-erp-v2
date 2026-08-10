@@ -64,7 +64,7 @@ def reset_buy_filters_callback():
 def reset_fg_filters_callback():
     for k in ["f_fg_code", "f_fg_name", "f_fg_cat"]: st.session_state[k] = "All Categories" if "cat" in k else ""
 
-# DIALOG MODALS FOR BULK DELETE (FIXED THREADING)
+# DIALOG MODALS FOR BULK DELETE (FIXED THREADING & SAFE ID HANDLING)
 @st.dialog("⚠️ Confirm Bulk Delete")
 def bulk_delete_stock_dialog(item_ids):
     st.error(f"Are you sure you want to delete {len(item_ids)} item(s)? This action cannot be undone.")
@@ -124,6 +124,15 @@ def bulk_delete_operations_dialog(item_ids):
         placeholders = ",".join(["?"] * len(item_ids))
         cursor.execute(f"DELETE FROM operations WHERE id IN ({placeholders})", item_ids)
         conn_dialog.commit(); st.success("Deleted!"); st.rerun()
+
+# HELPER TO SAFE EXTRACT IDS
+def get_selected_ids(df, selected_rows):
+    valid_ids = []
+    if selected_rows:
+        for idx in selected_rows:
+            if 0 <= idx < len(df):
+                valid_ids.append(int(df.iloc[idx]['ID']))
+    return valid_ids
 
 # DIALOG MODAL POP-UP FOR ADDING STOCK ITEMS
 @st.dialog("➕ Add New Item to Stock")
@@ -616,14 +625,15 @@ elif active_page == "Stock":
         sel = st.dataframe(df_raw, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_raw")
         
         if sel and len(sel.selection.rows) > 0:
-            selected_ids = [int(df_raw.iloc[i]['ID']) for i in sel.selection.rows if i < len(df_raw)]
-            st.info(f"☑️ Selected {len(selected_ids)} item(s)")
-            col_a1, col_a2, _ = st.columns([2, 2, 8])
-            with col_a1:
-                if len(selected_ids) == 1:
-                    if st.button("✏️ Edit Selected", use_container_width=True): edit_item_dialog(selected_ids[0])
-            with col_a2:
-                if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_stock_dialog(selected_ids)
+            selected_ids = get_selected_ids(df_raw, sel.selection.rows)
+            if selected_ids:
+                st.info(f"☑️ Selected {len(selected_ids)} item(s)")
+                col_a1, col_a2, _ = st.columns([2, 2, 8])
+                with col_a1:
+                    if len(selected_ids) == 1:
+                        if st.button("✏️ Edit Selected", use_container_width=True): edit_item_dialog(selected_ids[0])
+                with col_a2:
+                    if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_stock_dialog(selected_ids)
 
     elif active_subtab == "Buy_Parts":
         st.markdown("##### Purchased Parts & Fasteners")
@@ -648,14 +658,15 @@ elif active_page == "Stock":
         sel = st.dataframe(df_buy, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_buy")
         
         if sel and len(sel.selection.rows) > 0:
-            selected_ids = [int(df_buy.iloc[i]['ID']) for i in sel.selection.rows if i < len(df_buy)]
-            st.info(f"☑️ Selected {len(selected_ids)} item(s)")
-            col_a1, col_a2, _ = st.columns([2, 2, 8])
-            with col_a1:
-                if len(selected_ids) == 1:
-                    if st.button("✏️ Edit Selected", use_container_width=True): edit_item_dialog(selected_ids[0])
-            with col_a2:
-                if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_stock_dialog(selected_ids)
+            selected_ids = get_selected_ids(df_buy, sel.selection.rows)
+            if selected_ids:
+                st.info(f"☑️ Selected {len(selected_ids)} item(s)")
+                col_a1, col_a2, _ = st.columns([2, 2, 8])
+                with col_a1:
+                    if len(selected_ids) == 1:
+                        if st.button("✏️ Edit Selected", use_container_width=True): edit_item_dialog(selected_ids[0])
+                with col_a2:
+                    if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_stock_dialog(selected_ids)
 
     elif active_subtab == "Finished_Goods":
         st.markdown("##### Finished Goods & Subassemblies")
@@ -680,14 +691,15 @@ elif active_page == "Stock":
         sel = st.dataframe(df_fin, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_fin")
         
         if sel and len(sel.selection.rows) > 0:
-            selected_ids = [int(df_fin.iloc[i]['ID']) for i in sel.selection.rows if i < len(df_fin)]
-            st.info(f"☑️ Selected {len(selected_ids)} item(s)")
-            col_a1, col_a2, _ = st.columns([2, 2, 8])
-            with col_a1:
-                if len(selected_ids) == 1:
-                    if st.button("✏️ Edit Selected", use_container_width=True): edit_item_dialog(selected_ids[0])
-            with col_a2:
-                if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_stock_dialog(selected_ids)
+            selected_ids = get_selected_ids(df_fin, sel.selection.rows)
+            if selected_ids:
+                st.info(f"☑️ Selected {len(selected_ids)} item(s)")
+                col_a1, col_a2, _ = st.columns([2, 2, 8])
+                with col_a1:
+                    if len(selected_ids) == 1:
+                        if st.button("✏️ Edit Selected", use_container_width=True): edit_item_dialog(selected_ids[0])
+                with col_a2:
+                    if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_stock_dialog(selected_ids)
 
     elif active_subtab == "Suppliers":
         c_head, c_btn = st.columns([8, 2])
@@ -700,14 +712,15 @@ elif active_page == "Stock":
         sel_supp = st.dataframe(df_s, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_supp", column_config={"ID": None})
         
         if sel_supp and len(sel_supp.selection.rows) > 0:
-            selected_ids = [int(df_s.iloc[i]['ID']) for i in sel_supp.selection.rows if i < len(df_s)]
-            st.info(f"☑️ Selected {len(selected_ids)} supplier(s)")
-            col_a1, col_a2, _ = st.columns([2, 2, 8])
-            with col_a1:
-                if len(selected_ids) == 1:
-                    if st.button("✏️ Edit Selected", use_container_width=True): edit_supplier_dialog(selected_ids[0])
-            with col_a2:
-                if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_suppliers_dialog(selected_ids)
+            selected_ids = get_selected_ids(df_s, sel_supp.selection.rows)
+            if selected_ids:
+                st.info(f"☑️ Selected {len(selected_ids)} supplier(s)")
+                col_a1, col_a2, _ = st.columns([2, 2, 8])
+                with col_a1:
+                    if len(selected_ids) == 1:
+                        if st.button("✏️ Edit Selected", use_container_width=True): edit_supplier_dialog(selected_ids[0])
+                with col_a2:
+                    if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_suppliers_dialog(selected_ids)
 
     elif active_subtab == "Warehouses":
         st.markdown("##### Warehouses"); df_w = pd.read_sql_query("SELECT * FROM warehouses", conn); st.dataframe(df_w, hide_index=True)
@@ -759,14 +772,15 @@ elif active_page == "BOM":
         )
         
         if sel_op and len(sel_op.selection.rows) > 0:
-            selected_ids = [int(df_op.iloc[i]['ID']) for i in sel_op.selection.rows if i < len(df_op)]
-            st.info(f"☑️ Selected {len(selected_ids)} operation(s)")
-            col_a1, col_a2, _ = st.columns([2, 2, 8])
-            with col_a1:
-                if len(selected_ids) == 1:
-                    if st.button("✏️ Edit Selected", use_container_width=True): edit_operation_dialog(selected_ids[0])
-            with col_a2:
-                if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_operations_dialog(selected_ids)
+            selected_ids = get_selected_ids(df_op, sel_op.selection.rows)
+            if selected_ids:
+                st.info(f"☑️ Selected {len(selected_ids)} operation(s)")
+                col_a1, col_a2, _ = st.columns([2, 2, 8])
+                with col_a1:
+                    if len(selected_ids) == 1:
+                        if st.button("✏️ Edit Selected", use_container_width=True): edit_operation_dialog(selected_ids[0])
+                with col_a2:
+                    if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_operations_dialog(selected_ids)
 
     # --- PRODUCTION FACILITIES SUBTAB ---
     elif active_subtab_bom == "Facilities":
@@ -780,14 +794,15 @@ elif active_page == "BOM":
         sel_fac = st.dataframe(df_fac, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_fac", column_config={"ID": None})
         
         if sel_fac and len(sel_fac.selection.rows) > 0:
-            selected_ids = [int(df_fac.iloc[i]['ID']) for i in sel_fac.selection.rows if i < len(df_fac)]
-            st.info(f"☑️ Selected {len(selected_ids)} facility(ies)")
-            col_a1, col_a2, _ = st.columns([2, 2, 8])
-            with col_a1:
-                if len(selected_ids) == 1:
-                    if st.button("✏️ Edit Selected", use_container_width=True): edit_facility_dialog(selected_ids[0])
-            with col_a2:
-                if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_facilities_dialog(selected_ids)
+            selected_ids = get_selected_ids(df_fac, sel_fac.selection.rows)
+            if selected_ids:
+                st.info(f"☑️ Selected {len(selected_ids)} facility(ies)")
+                col_a1, col_a2, _ = st.columns([2, 2, 8])
+                with col_a1:
+                    if len(selected_ids) == 1:
+                        if st.button("✏️ Edit Selected", use_container_width=True): edit_facility_dialog(selected_ids[0])
+                with col_a2:
+                    if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_facilities_dialog(selected_ids)
 
     elif active_subtab_bom == "BOM_Recipes":
         st.info("BOM Recipes module will be configured next.")
@@ -824,14 +839,15 @@ elif active_page == "RFQ":
         sel_cust = st.dataframe(df_c, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_cust", column_config={"ID": None})
         
         if sel_cust and len(sel_cust.selection.rows) > 0:
-            selected_ids = [int(df_c.iloc[i]['ID']) for i in sel_cust.selection.rows if i < len(df_c)]
-            st.info(f"☑️ Selected {len(selected_ids)} customer(s)")
-            col_a1, col_a2, _ = st.columns([2, 2, 8])
-            with col_a1:
-                if len(selected_ids) == 1:
-                    if st.button("✏️ Edit Selected", use_container_width=True): edit_customer_dialog(selected_ids[0])
-            with col_a2:
-                if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_customers_dialog(selected_ids)
+            selected_ids = get_selected_ids(df_c, sel_cust.selection.rows)
+            if selected_ids:
+                st.info(f"☑️ Selected {len(selected_ids)} customer(s)")
+                col_a1, col_a2, _ = st.columns([2, 2, 8])
+                with col_a1:
+                    if len(selected_ids) == 1:
+                        if st.button("✏️ Edit Selected", use_container_width=True): edit_customer_dialog(selected_ids[0])
+                with col_a2:
+                    if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_customers_dialog(selected_ids)
                 
     elif active_subtab_rfq == "Quotations":
         st.info("Quotations functionality will be added here.")
