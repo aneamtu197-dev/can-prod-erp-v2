@@ -46,9 +46,12 @@ def bulk_delete_dialog(item_ids):
 
 # DIALOG MODAL POP-UP FOR ADDING
 @st.dialog("➕ Add New Item to Stock")
-def add_new_item_dialog():
+def add_new_item_dialog(default_type="Raw Material"):
     st.subheader("Step 1: Select Item Type & Category")
-    item_type = st.selectbox("Item Type *", ["Raw Material", "Buy Part", "Finished Good / Subassembly"])
+    
+    types = ["Raw Material", "Buy Part", "Finished Good / Subassembly"]
+    idx = types.index(default_type) if default_type in types else 0
+    item_type = st.selectbox("Item Type *", types, index=idx)
     
     if item_type == "Raw Material":
         sub_group = st.selectbox("Main Sub-Group *", ["Tabla", "Teava", "Europrofile", "Raw Materials Diverse"])
@@ -173,7 +176,7 @@ elif active_page == "Stock":
         c1, c2, c3 = st.columns([6, 2, 2])
         with c1: st.markdown("##### Raw Materials Inventory")
         with c2: 
-            if st.button("➕ Add Item (Pop-Up)", use_container_width=True, type="primary"): add_new_item_dialog()
+            if st.button("➕ Add Item", use_container_width=True, type="primary"): add_new_item_dialog("Raw Material")
         with c3:
             with st.popover("↑ Import CSV", use_container_width=True):
                 csv_file = st.file_uploader("Upload CSV", type=['csv'])
@@ -217,7 +220,7 @@ elif active_page == "Stock":
     # --- TAB 2: BUY PARTS ---
     elif active_subtab == "Buy_Parts":
         st.markdown("##### Purchased Parts & Fasteners")
-        if st.button("➕ Add Buy Part (Pop-Up)", type="primary"): add_new_item_dialog()
+        if st.button("➕ Add Item", type="primary"): add_new_item_dialog("Buy Part")
         st.write("")
 
         st.markdown('<div class="filter-panel">', unsafe_allow_html=True)
@@ -252,7 +255,7 @@ elif active_page == "Stock":
     # --- TAB 3: FINISHED GOODS ---
     elif active_subtab == "Finished_Goods":
         st.markdown("##### Finished Goods & Subassemblies")
-        if st.button("➕ Add Finished Good", type="primary"): add_new_item_dialog()
+        if st.button("➕ Add Item", type="primary"): add_new_item_dialog("Finished Good / Subassembly")
         st.write("")
         df_fin = pd.read_sql_query("SELECT si.id as ID, si.uniq_code as 'Uniq Code', si.name as 'Description', si.category as 'Category', u.code as 'UoM', si.selling_price as 'Selling Price (€)' FROM stock_items si LEFT JOIN units u ON si.unit_id = u.id WHERE si.category IN ('FINISHED GOOD', 'SUBASSEMBLY')", conn)
         sel = st.dataframe(df_fin, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_fin")
