@@ -26,6 +26,10 @@ render_nav_bar(active_page)
 
 conn = get_db()
 
+# Session State for Dynamic Dropdown Reset
+if "bom_select_version" not in st.session_state:
+    st.session_state["bom_select_version"] = 0
+
 # --- ANAF API FUNCTION ---
 def fetch_anaf_data(cui):
     try:
@@ -600,7 +604,7 @@ def create_finished_product_dialog():
         else:
             st.warning("Te rugăm să introduci Part Description!")
 
-# DIALOG MODAL POP-UP FOR PRODUCT RECIPES (BOM & ROUTING)
+# DIALOG MODAL POP-UP FOR PRODUCT RECIPES (BOM & ROUTING) WITH INLINE EDITING
 @st.dialog("➕ Edit Product BOM Recipe & Routing", width="large")
 def manage_product_bom_dialog(selected_prod_id=None):
     st.session_state["keep_bom_dialog_open"] = False
@@ -652,12 +656,51 @@ def manage_product_bom_dialog(selected_prod_id=None):
         df_all_mat = pd.read_sql_query("SELECT id, uniq_code, name, purchase_price, unit_id, specific_weight FROM stock_items WHERE category IN ('RAW MATERIAL', 'BUY PART') ORDER BY name", conn_dialog)
         mat_dict = {f"{r['uniq_code']} - {r['name']} ({r['purchase_price']} €)": r['id'] for _, r in df_all_mat.iterrows()}
         
-        # Empty Default Selection Placeholder
+        # DISPLAY COMPLETED MATERIAL LINES AT THE TOP WITH INLINE EDITING
+        q_bm = """
+            SELECT bm.id as ID, si.uniq_code as 'Code', si.name as 'Material Name', bm.quantity_required as 'Qty', u.code as 'UoM', bm.unit_cost as 'Price', bm.total_cost as 'Total Cost'
+            FROM bom_materials bm
+            JOIN stock_items si ON bm.material_item_id = si.id
+            JOIN units u ON si.unit_id = u.id
+            WHERE bm.bom_id = ?
+        """
+        df_bm = pd.read_sql_query(q_bm, conn_dialog, params=[bom_id])
+        if len(df_bm) > 0:
+            st.markdown("###### Current BOM Materials List:")
+            for _, r_m in df_bm.iterrows():
+                cm1, cm2, cm3, cm4, cm5, cm6 = st.columns([1.5, 3.5, 2, 2, 2, 1])
+                cm1.write(f"**{r_m['Code']}**")
+                cm2.write(r_m['Material Name'])
+                
+                # Inline editable Quantity & Cost
+                edit_m_qty = cm3.number_input(f"Qty ({r_m['UoM']})", min_value=0.001, value=float(r_m['Qty']), step=0.1, key=f"edit_mqty_{r_m['ID']}")
+                edit_m_cost = cm4.number_input("Unit Price (€)", min_value=0.0, value=float(r_m['Price']), step=0.1, key=f"edit_mcost_{r_m['ID']}")
+                new_tot_m = float(edit_m_qty * edit_m_cost)
+                cm5.write(f"**{new_tot_m:.2f} €**")
+                
+                # Check if values changed to auto-save or delete
+                if (edit_m_qty != float(r_m['Qty']) or edit_m_cost != float(r_m['Price'])) and cm6.button("💾", key=f"save_m_{r_m['ID']}"):
+                    cursor.execute("UPDATE bom_materials SET quantity_required = ?, unit_cost = ?, total_cost = ? WHERE id = ?", (edit_m_qty, edit_m_cost, new_tot_m, r_m['ID']))
+                    conn_dialog.commit()
+                    st.session_state["active_bom_dialog_prod_id"] = target_prod_id
+                    st.session_state["keep_bom_dialog_open"] = True
+                    st.rerun()
+
+                if cm6.button("🗑️", key=f"del_mat_{r_m['ID']}"):
+                    cursor.execute("DELETE FROM bom_materials WHERE id = ?", (r_m['ID'],))
+                    conn_dialog.commit()
+                    st.session_state["active_bom_dialog_prod_id"] = target_prod_id
+                    st.session_state["keep_bom_dialog_open"] = True
+                    st.rerun()
+            st.divider()
+
+        # INPUT FORM AT THE BOTTOM (RESETS DYNAMICALLY WITH VERSION)
         mat_options = [""] + list(mat_dict.keys())
+        ver_m = st.session_state["bom_select_version"]
         
         col_m1, col_m2, col_m3 = st.columns([5, 3, 2])
-        add_mat_key = col_m1.selectbox("Select Material Component", mat_options, index=0, key="sel_bom_mat")
-        add_mat_qty = col_m2.number_input("Required Qty", min_value=0.001, value=1.0, step=0.1, key="num_bom_mat_qty")
+        add_mat_key = col_m1.selectbox("Select Material Component", mat_options, index=0, key=f"sel_bom_mat_v_{ver_m}")
+        add_mat_qty = col_m2.number_input("Required Qty", min_value=0.001, value=1.0, step=0.1, key=f"num_bom_mat_qty_v_{ver_m}")
         
         col_m3.write(""); col_m3.write("")
         if col_m3.button("➕ Add Material", key="btn_add_mat", use_container_width=True):
@@ -669,67 +712,21 @@ def manage_product_bom_dialog(selected_prod_id=None):
                 cursor.execute("INSERT INTO bom_materials (bom_id, material_item_id, quantity_required, unit_cost, total_cost) VALUES (?, ?, ?, ?, ?)",
                                (bom_id, m_id, add_mat_qty, price, tot_c))
                 conn_dialog.commit()
+                st.session_state["bom_select_version"] += 1
                 st.session_state["active_bom_dialog_prod_id"] = target_prod_id
                 st.session_state["keep_bom_dialog_open"] = True
                 st.rerun()
             else:
                 st.warning("Te rugăm să selectezi un material din listă!")
 
-        q_bm = """
-            SELECT bm.id as ID, si.uniq_code as 'Code', si.name as 'Material Name', bm.quantity_required as 'Qty', u.code as 'UoM', bm.unit_cost as 'Price (€)', bm.total_cost as 'Total Cost (€)', si.specific_weight as 'Spec Weight'
-            FROM bom_materials bm
-            JOIN stock_items si ON bm.material_item_id = si.id
-            JOIN units u ON si.unit_id = u.id
-            WHERE bm.bom_id = ?
-        """
-        df_bm = pd.read_sql_query(q_bm, conn_dialog, params=[bom_id])
-        if len(df_bm) > 0:
-            for _, r_m in df_bm.iterrows():
-                cm1, cm2, cm3, cm4, cm5, cm6 = st.columns([1.5, 4, 1.5, 2, 2, 1])
-                cm1.write(f"**{r_m['Code']}**")
-                cm2.write(r_m['Material Name'])
-                cm3.write(f"{r_m['Qty']} {r_m['UoM']}")
-                cm4.write(f"{r_m['Price (€)']:.2f} €")
-                cm5.write(f"**{r_m['Total Cost (€)']:.2f} €**")
-                if cm6.button("🗑️", key=f"del_mat_{r_m['ID']}"):
-                    cursor.execute("DELETE FROM bom_materials WHERE id = ?", (r_m['ID'],))
-                    conn_dialog.commit()
-                    st.session_state["active_bom_dialog_prod_id"] = target_prod_id
-                    st.session_state["keep_bom_dialog_open"] = True
-                    st.rerun()
-
     with t_ops:
         st.markdown("##### 2. Manufacturing Operations Routing")
         df_all_ops = pd.read_sql_query("SELECT id, uniq_code, name, rate_per_unit, cost_unit, is_outsourced FROM operations ORDER BY uniq_code", conn_dialog)
         op_dict = {f"{r['uniq_code']} - {r['name']} ({r['rate_per_unit']} € / {r['cost_unit']})": r['id'] for _, r in df_all_ops.iterrows()}
         
-        # Empty Default Selection Placeholder
-        op_options = [""] + list(op_dict.keys())
-        
-        col_o1, col_o2, col_o3 = st.columns([5, 3, 2])
-        add_op_key = col_o1.selectbox("Select Operation Step", op_options, index=0, key="sel_bom_op")
-        add_op_dur = col_o2.number_input("Est. Duration / Qty (Hours/Pcs/m2)", min_value=0.01, value=0.5, step=0.1, key="num_bom_op_dur")
-        
-        col_o3.write(""); col_o3.write("")
-        if col_o3.button("➕ Add Operation Step", key="btn_add_op", use_container_width=True):
-            if add_op_key and add_op_key != "":
-                o_id = op_dict[add_op_key]
-                cursor.execute("SELECT rate_per_unit FROM operations WHERE id = ?", (o_id,))
-                rate = cursor.fetchone()[0] or 0.0
-                tot_c = float(rate * add_op_dur)
-                cursor.execute("SELECT COALESCE(MAX(step_number), 0) + 1 FROM bom_operations WHERE bom_id = ?", (bom_id,))
-                next_step = cursor.fetchone()[0]
-                cursor.execute("INSERT INTO bom_operations (bom_id, operation_id, step_number, duration_hours, rate_applied, total_cost) VALUES (?, ?, ?, ?, ?, ?)",
-                               (bom_id, o_id, next_step, add_op_dur, rate, tot_c))
-                conn_dialog.commit()
-                st.session_state["active_bom_dialog_prod_id"] = target_prod_id
-                st.session_state["keep_bom_dialog_open"] = True
-                st.rerun()
-            else:
-                st.warning("Te rugăm să selectezi o operație din listă!")
-
+        # DISPLAY COMPLETED OPERATION LINES AT THE TOP WITH INLINE EDITING
         q_bo = """
-            SELECT bo.id as ID, bo.step_number as Step, o.uniq_code as 'Op Code', o.name as 'Operation Name', o.cost_unit as 'Unit', bo.duration_hours as 'Duration', bo.rate_applied as 'Rate (€)', bo.total_cost as 'Total Cost (€)'
+            SELECT bo.id as ID, bo.step_number as Step, o.uniq_code as 'Op Code', o.name as 'Operation Name', o.cost_unit as 'Unit', bo.duration_hours as 'Duration', bo.rate_applied as 'Rate', bo.total_cost as 'Total Cost'
             FROM bom_operations bo
             JOIN operations o ON bo.operation_id = o.id
             WHERE bo.bom_id = ?
@@ -737,16 +734,27 @@ def manage_product_bom_dialog(selected_prod_id=None):
         """
         df_bo = pd.read_sql_query(q_bo, conn_dialog, params=[bom_id])
         if len(df_bo) > 0:
+            st.markdown("###### Current Routing Operations List:")
             for idx_o, r_o in df_bo.iterrows():
-                co_step, co_code, co_name, co_dur, co_rate, co_tot, co_actions = st.columns([1, 1.5, 3, 1.5, 1.5, 1.5, 2])
+                co_step, co_code, co_name, co_dur, co_rate, co_tot, co_actions = st.columns([1, 1.5, 3, 2, 2, 2, 2])
                 co_step.write(f"**Step {r_o['Step']}**")
                 co_code.write(r_o['Op Code'])
                 co_name.write(r_o['Operation Name'])
-                co_dur.write(f"{r_o['Duration']} {r_o['Unit']}")
-                co_rate.write(f"{r_o['Rate (€)']:.2f} €")
-                co_tot.write(f"**{r_o['Total Cost (€)']:.2f} €**")
                 
-                c_up, c_down, c_del_o = co_actions.columns(3)
+                # Inline editable Duration & Rate
+                edit_o_dur = co_dur.number_input(f"Qty ({r_o['Unit']})", min_value=0.01, value=float(r_o['Duration']), step=0.1, key=f"edit_odur_{r_o['ID']}")
+                edit_o_rate = co_rate.number_input("Rate (€)", min_value=0.0, value=float(r_o['Rate']), step=0.5, key=f"edit_orate_{r_o['ID']}")
+                new_tot_o = float(edit_o_dur * edit_o_rate)
+                co_tot.write(f"**{new_tot_o:.2f} €**")
+                
+                c_save_o, c_up, c_down, c_del_o = co_actions.columns(4)
+                if (edit_o_dur != float(r_o['Duration']) or edit_o_rate != float(r_o['Rate'])) and c_save_o.button("💾", key=f"save_o_{r_o['ID']}"):
+                    cursor.execute("UPDATE bom_operations SET duration_hours = ?, rate_applied = ?, total_cost = ? WHERE id = ?", (edit_o_dur, edit_o_rate, new_tot_o, r_o['ID']))
+                    conn_dialog.commit()
+                    st.session_state["active_bom_dialog_prod_id"] = target_prod_id
+                    st.session_state["keep_bom_dialog_open"] = True
+                    st.rerun()
+
                 if idx_o > 0 and c_up.button("⬆️", key=f"up_op_{r_o['ID']}"):
                     prev_id = df_bo.iloc[idx_o - 1]['ID']
                     prev_step = df_bo.iloc[idx_o - 1]['Step']
@@ -771,6 +779,34 @@ def manage_product_bom_dialog(selected_prod_id=None):
                     st.session_state["active_bom_dialog_prod_id"] = target_prod_id
                     st.session_state["keep_bom_dialog_open"] = True
                     st.rerun()
+            st.divider()
+
+        # INPUT FORM AT THE BOTTOM (RESETS DYNAMICALLY WITH VERSION)
+        op_options = [""] + list(op_dict.keys())
+        ver_o = st.session_state["bom_select_version"]
+        
+        col_o1, col_o2, col_o3 = st.columns([5, 3, 2])
+        add_op_key = col_o1.selectbox("Select Operation Step", op_options, index=0, key=f"sel_bom_op_v_{ver_o}")
+        add_op_dur = col_o2.number_input("Est. Duration / Qty (Hours/Pcs/m2)", min_value=0.01, value=0.5, step=0.1, key=f"num_bom_op_dur_v_{ver_o}")
+        
+        col_o3.write(""); col_o3.write("")
+        if col_o3.button("➕ Add Operation Step", key="btn_add_op", use_container_width=True):
+            if add_op_key and add_op_key != "":
+                o_id = op_dict[add_op_key]
+                cursor.execute("SELECT rate_per_unit FROM operations WHERE id = ?", (o_id,))
+                rate = cursor.fetchone()[0] or 0.0
+                tot_c = float(rate * add_op_dur)
+                cursor.execute("SELECT COALESCE(MAX(step_number), 0) + 1 FROM bom_operations WHERE bom_id = ?", (bom_id,))
+                next_step = cursor.fetchone()[0]
+                cursor.execute("INSERT INTO bom_operations (bom_id, operation_id, step_number, duration_hours, rate_applied, total_cost) VALUES (?, ?, ?, ?, ?, ?)",
+                               (bom_id, o_id, next_step, add_op_dur, rate, tot_c))
+                conn_dialog.commit()
+                st.session_state["bom_select_version"] += 1
+                st.session_state["active_bom_dialog_prod_id"] = target_prod_id
+                st.session_state["keep_bom_dialog_open"] = True
+                st.rerun()
+            else:
+                st.warning("Te rugăm să selectezi o operație din listă!")
 
     # Recalculate Totals & Weight
     cursor.execute("SELECT SUM(total_cost) FROM bom_materials WHERE bom_id = ?", (bom_id,))
@@ -1254,39 +1290,47 @@ elif active_page == "BOM":
                 COALESCE(b.calculated_weight, 0.0) as 'Weight (kg)',
                 b.total_material_cost as 'Material Cost (€)',
                 b.total_labor_cost as 'Operations Cost (€)',
+                b.total_production_cost as 'Total BOM Cost (€)',
+                si.product_item_id_raw as 'p_id'
+            FROM product_boms b
+            JOIN (SELECT id as product_item_id_raw, id, uniq_code, name FROM stock_items) si ON b.product_item_id = si.id
+            LEFT JOIN customers c ON b.customer_id = c.id
+            ORDER BY si.name
+        """
+        # Execute query safely
+        q_boms_clean = """
+            SELECT 
+                b.id as ID,
+                b.product_item_id as PROD_ID,
+                si.uniq_code as 'Product Code',
+                si.name as 'Product Name',
+                COALESCE(c.name, 'General / Stock Product') as 'Customer',
+                COALESCE(b.calculated_weight, 0.0) as 'Weight (kg)',
+                b.total_material_cost as 'Material Cost (€)',
+                b.total_labor_cost as 'Operations Cost (€)',
                 b.total_production_cost as 'Total BOM Cost (€)'
             FROM product_boms b
             JOIN stock_items si ON b.product_item_id = si.id
             LEFT JOIN customers c ON b.customer_id = c.id
             ORDER BY si.name
         """
-        df_boms = pd.read_sql_query(q_boms, conn)
-        sel_boms = st.dataframe(
-            df_boms, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_boms",
-            column_config={
-                "ID": None,
-                "Weight (kg)": st.column_config.NumberColumn("Weight (kg)", format="%.2f kg"),
-                "Material Cost (€)": st.column_config.NumberColumn("Material Cost (€)", format="%.2f €"),
-                "Operations Cost (€)": st.column_config.NumberColumn("Operations Cost (€)", format="%.2f €"),
-                "Total BOM Cost (€)": st.column_config.NumberColumn("Total BOM Cost (€)", format="%.2f €")
-            }
-        )
+        df_boms = pd.read_sql_query(q_boms_clean, conn)
         
-        if sel_boms and len(sel_boms.selection.rows) > 0:
-            selected_ids = get_selected_ids(df_boms, sel_boms.selection.rows)
-            if selected_ids:
-                st.info(f"☑️ Selected {len(selected_ids)} recipe(s)")
-                col_a1, col_a2, _ = st.columns([2, 2, 8])
-                with col_a1:
-                    if len(selected_ids) == 1:
-                        cursor_page = conn.cursor()
-                        cursor_page.execute("SELECT product_item_id FROM product_boms WHERE id = ?", (selected_ids[0],))
-                        p_row = cursor_page.fetchone()
-                        if p_row and st.button("✏️ Edit Selected Recipe", use_container_width=True): 
-                            manage_product_bom_dialog(p_row[0])
-                with col_a2:
-                    if st.button("🗑️ Delete Selected Recipe", use_container_width=True): 
-                        bulk_delete_boms_dialog(selected_ids)
+        # Display Direct Edit Button per Row
+        if len(df_boms) > 0:
+            for _, r_bom in df_boms.iterrows():
+                cb1, cb2, cb3, cb4, cb5, cb6, cb7, cb8 = st.columns([1.5, 3.5, 2.5, 1.5, 2, 2, 2, 1.5])
+                cb1.write(f"**{r_bom['Product Code']}**")
+                cb2.write(r_bom['Product Name'])
+                cb3.write(r_bom['Customer'])
+                cb4.write(f"{r_bom['Weight (kg)']:.2f} kg")
+                cb5.write(f"{r_bom['Material Cost (€)']:.2f} €")
+                cb6.write(f"{r_bom['Operations Cost (€)']:.2f} €")
+                cb7.write(f"**{r_bom['Total BOM Cost (€)']:.2f} €**")
+                if cb8.button("✏️ Edit", key=f"btn_edit_bom_{r_bom['ID']}", use_container_width=True):
+                    manage_product_bom_dialog(r_bom['PROD_ID'])
+        else:
+            st.info("No Product Recipes created yet. Click '➕ Create Finished Product' above to start.")
 
     # --- OPERATIONS SUBTAB ---
     elif active_subtab_bom == "Operations":
