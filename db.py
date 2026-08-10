@@ -134,6 +134,7 @@ def init_custom_db():
         total_labor_cost REAL DEFAULT 0.0,
         total_production_cost REAL DEFAULT 0.0,
         calculated_weight REAL DEFAULT 0.0,
+        markup_percent REAL DEFAULT 0.0,
         FOREIGN KEY (product_item_id) REFERENCES stock_items(id) ON DELETE CASCADE,
         FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL
     );
@@ -185,6 +186,8 @@ def init_custom_db():
     existing_pb_cols = [col[1] for col in cursor.fetchall()]
     if 'calculated_weight' not in existing_pb_cols:
         cursor.execute("ALTER TABLE product_boms ADD COLUMN calculated_weight REAL DEFAULT 0.0")
+    if 'markup_percent' not in existing_pb_cols:
+        cursor.execute("ALTER TABLE product_boms ADD COLUMN markup_percent REAL DEFAULT 0.0")
 
     # DEFAULT UNITS
     cursor.execute("SELECT COUNT(*) FROM units")
@@ -198,7 +201,6 @@ def init_custom_db():
         for c, n, t in [('WH-MAIN', 'Main Central Warehouse', 'Internal Warehouse'), ('WH-FINISHED', 'Finished Goods Storage', 'Internal Warehouse')]:
             cursor.execute("INSERT INTO warehouses (code, name, location_type) VALUES (?, ?, ?)", (c, n, t))
 
-    # AUTO GENERATE VIRTUAL WAREHOUSES FOR ALL EXISTING CUSTOMERS (EXACT NAME)
     auto_create_customer_warehouses(conn)
 
     conn.commit()
