@@ -28,29 +28,28 @@ def fetch_anaf_data(cui):
         if not clean_cui: return None, "CUI invalid (conține doar cifre)."
         
         today = datetime.now().strftime("%Y-%m-%d")
-        url = "https://webservicesp.anaf.ro/PlatitorTvaRest/api/v8/ws/tva"
         payload = [{"cui": int(clean_cui), "data": today}]
         headers = {"Content-Type": "application/json"}
         
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            if data.get('cod') == 200 and data.get('found') and len(data.get('found')) > 0:
-                company = data['found'][0]
-                return {
-                    'name': company.get('denumire', ''),
-                    'address': company.get('adresa', ''),
-                    'reg_com': company.get('nrRegCom', '')
-                }, None
-            else:
-                return None, "CUI-ul nu a fost găsit în baza de date ANAF."
-        elif response.status_code in [403, 404]:
-            return None, "🚨 ANAF blochează cererile de pe serverele Streamlit Cloud (Geo-Blocking). Te rugăm să introduci datele manual."
-        else:
-            return None, f"Eroare server ANAF (Cod: {response.status_code})"
+        for version in ["v9", "v8", "v7"]:
+            url = f"https://webservicesp.anaf.ro/PlatitorTvaRest/api/{version}/ws/tva"
+            response = requests.post(url, json=payload, headers=headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('cod') == 200 and data.get('found') and len(data.get('found')) > 0:
+                    company = data['found'][0]
+                    return {
+                        'name': company.get('denumire', ''),
+                        'address': company.get('adresa', ''),
+                        'reg_com': company.get('nrRegCom', '')
+                    }, None
+                else:
+                    return None, "CUI-ul nu a fost găsit în baza de date ANAF."
+            elif response.status_code in [403, 404]:
+                continue # Incearca versiunea urmatoare
+        return None, "🚨 ANAF blochează cererile de pe serverele Streamlit Cloud. Te rugăm să introduci datele manual."
     except Exception as e:
-        return None, "🚨 Eroare conexiune ANAF (firewall/blocaj rețea). Te rugăm să introduci datele manual."
+        return None, "🚨 Eroare conexiune ANAF. Te rugăm să introduci datele manual."
 
 # Callback Functions for Filters
 def reset_raw_filters_callback():
@@ -62,41 +61,35 @@ def reset_buy_filters_callback():
 def reset_fg_filters_callback():
     for k in ["f_fg_code", "f_fg_name", "f_fg_cat"]: st.session_state[k] = "All Categories" if "cat" in k else ""
 
-# DIALOG MODAL FOR BULK DELETE STOCK ITEMS
+# DIALOG MODALS FOR BULK DELETE
 @st.dialog("⚠️ Confirm Bulk Delete")
 def bulk_delete_stock_dialog(item_ids):
     st.error(f"Are you sure you want to delete {len(item_ids)} item(s)? This action cannot be undone.")
-    c1, c2 = st.columns(2)
-    if c1.button("Cancel", use_container_width=True): st.rerun()
-    if c2.button("Yes, Delete All", type="primary", use_container_width=True):
-        cursor = conn.cursor()
-        placeholders = ",".join(["?"] * len(item_ids))
-        cursor.execute(f"DELETE FROM stock_items WHERE id IN ({placeholders})", item_ids)
-        conn.commit()
-        st.success("Items deleted successfully!"); st.rerun()
+    if st.button("Yes, Delete All", type="primary", use_container_width=True):
+        conn.cursor().execute(f"DELETE FROM stock_items WHERE id IN ({','.join(['?']*len(item_ids))})", item_ids)
+        conn.commit(); st.success("Deleted!"); st.rerun()
 
-# DIALOG MODAL FOR BULK DELETE SUPPLIERS
 @st.dialog("⚠️ Confirm Bulk Delete")
 def bulk_delete_suppliers_dialog(item_ids):
     st.error(f"Are you sure you want to delete {len(item_ids)} supplier(s)? This action cannot be undone.")
-    c1, c2 = st.columns(2)
-    if c1.button("Cancel", use_container_width=True): st.rerun()
-    if c2.button("Yes, Delete All", type="primary", use_container_width=True):
-        cursor = conn.cursor()
-        placeholders = ",".join(["?"] * len(item_ids))
-        cursor.execute(f"DELETE FROM suppliers WHERE id IN ({placeholders})", item_ids)
-        conn.commit()
-        st.success("Suppliers deleted successfully!"); st.rerun()
+    if st.button("Yes, Delete All", type="primary", use_container_width=True):
+        conn.cursor().execute(f"DELETE FROM suppliers WHERE id IN ({','.join(['?']*len(item_ids))})", item_ids)
+        conn.commit(); st.success("Deleted!"); st.rerun()
+
+@st.dialog("⚠️ Confirm Bulk Delete")
+def bulk_delete_customers_dialog(item_ids):
+    st.error(f"Are you sure you want to delete {len(item_ids)} customer(s)? This action cannot be undone.")
+    if st.button("Yes, Delete All", type="primary", use_container_width=True):
+        conn.cursor().execute(f"DELETE FROM customers WHERE id IN ({','.join(['?']*len(item_ids))})", item_ids)
+        conn.commit(); st.success("Deleted!"); st.rerun()
 
 # DIALOG MODAL POP-UP FOR ADDING STOCK ITEMS
 @st.dialog("➕ Add New Item to Stock")
 def add_new_item_dialog(default_type="Raw Material"):
     conn_dialog = get_db()
     st.subheader("Step 1: Select Item Type & Category")
-    
     types = ["Raw Material", "Buy Part", "Finished Good / Subassembly"]
-    idx = types.index(default_type) if default_type in types else 0
-    item_type = st.selectbox("Item Type *", types, index=idx)
+    item_type = st.selectbox("Item Type *", types, index=types.index(default_type) if default_type in types else 0)
     
     if item_type == "Raw Material":
         sub_group = st.selectbox("Main Sub-Group *", ["Tabla", "Teava", "Europrofile", "Raw Materials Diverse"])
@@ -131,9 +124,9 @@ def add_new_item_dialog(default_type="Raw Material"):
         with col2:
             price = st.number_input("Purchase Price (€)", min_value=0.0) if item_type != "Finished Good / Subassembly" else 0.0
             selling_p = st.number_input("Selling Price (€)", min_value=0.0)
-            col_w1, col_w2 = st.columns([2, 1])
-            with col_w1: spec_weight = st.number_input("Specific Weight / Unit", min_value=0.0)
-            with col_w2: w_unit = st.selectbox("Weight Unit", ["kg", "lbs", "g"])
+            c_w1, c_w2 = st.columns([2, 1])
+            with c_w1: spec_weight = st.number_input("Specific Weight / Unit", min_value=0.0)
+            with c_w2: w_unit = st.selectbox("Weight Unit", ["kg", "lbs", "g"])
             
             df_w_opts = pd.read_sql_query("SELECT id, name FROM warehouses ORDER BY name", conn_dialog)
             w_dict = {r['name']: r['id'] for _, r in df_w_opts.iterrows()}
@@ -145,10 +138,8 @@ def add_new_item_dialog(default_type="Raw Material"):
             if auto_uniq and name:
                 conn_dialog.cursor().execute("""INSERT INTO stock_items (uniq_code, code, name, category, sub_group, supplier_id, unit_id, warehouse_id, purchase_price, selling_price, specific_weight, weight_unit, current_stock, min_stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", 
                                       (auto_uniq, code, name, category, sub_group, s_dict.get(selected_s), u_dict.get(selected_u), w_dict.get(selected_w), price, selling_p, spec_weight, w_unit, stock_qty, min_stock_qty))
-                conn_dialog.commit()
-                st.success("Item saved!"); st.rerun()
+                conn_dialog.commit(); st.success("Item saved!"); st.rerun()
 
-# DIALOG MODAL POP-UP FOR EDITING STOCK ITEMS
 @st.dialog("✏️ Edit Item Details")
 def edit_item_dialog(item_id):
     conn_dialog = get_db()
@@ -203,48 +194,31 @@ def edit_item_dialog(item_id):
 @st.dialog("➕ Add New Supplier")
 def add_supplier_dialog():
     conn_dialog = get_db()
-    
     st.subheader("🔍 Auto-Complete via ANAF API")
-    st.caption("Introdu CUI-ul furnizorului (ex: RO123456) pentru a descărca datele oficiale.")
     col_anaf1, col_anaf2 = st.columns([3, 1])
-    with col_anaf1:
-        search_cui = st.text_input("CUI (RO...)", key="search_cui_input")
+    with col_anaf1: search_cui = st.text_input("CUI (RO...)", key="s_cui_input")
     with col_anaf2:
         st.write(""); st.write("")
         if st.button("Search ANAF", use_container_width=True):
             if search_cui:
-                with st.spinner('Se caută la ANAF...'):
+                with st.spinner('Se caută...'):
                     data, err = fetch_anaf_data(search_cui)
                 if data:
-                    st.session_state['anaf_name'] = data['name']
-                    st.session_state['anaf_address'] = data['address']
-                    st.session_state['anaf_reg'] = data['reg_com']
-                    st.session_state['anaf_cui'] = search_cui
-                    st.success("Date descărcate cu succes!")
-                    st.rerun()
-                else:
-                    st.error(err)
-            else:
-                st.warning("Introdu un CUI înainte de a căuta!")
-    
+                    st.session_state['s_anaf_name'] = data['name']; st.session_state['s_anaf_address'] = data['address']
+                    st.session_state['s_anaf_reg'] = data['reg_com']; st.session_state['s_anaf_cui'] = search_cui
+                    st.success("Date descărcate!")
+                else: st.error(err)
     st.divider()
-    
     with st.form("add_supplier_form"):
         st.subheader("Supplier Details")
         col1, col2 = st.columns(2)
-        
-        def_cui = st.session_state.get('anaf_cui', '')
-        def_name = st.session_state.get('anaf_name', '')
-        def_address = st.session_state.get('anaf_address', '')
-        def_reg = st.session_state.get('anaf_reg', '')
-
         with col1:
             s_code = st.text_input("Supplier Internal Code *", placeholder="e.g. SUP003")
-            s_cui = st.text_input("CUI / Tax ID *", value=def_cui)
-            s_name = st.text_input("Supplier Name *", value=def_name)
-            s_reg = st.text_input("Reg. Com. (J.../...)", value=def_reg)
+            s_cui = st.text_input("CUI / Tax ID *", value=st.session_state.get('s_anaf_cui', ''))
+            s_name = st.text_input("Supplier Name *", value=st.session_state.get('s_anaf_name', ''))
+            s_reg = st.text_input("Reg. Com. (J.../...)", value=st.session_state.get('s_anaf_reg', ''))
             s_type = st.selectbox("Type of Supplier *", ["Raw Material Supplier", "Buy Parts Supplier", "General / Both"])
-            s_address = st.text_area("Address", value=def_address, height=105)
+            s_address = st.text_area("Address", value=st.session_state.get('s_anaf_address', ''), height=105)
         with col2:
             s_contact = st.text_input("Contact Person")
             s_phone = st.text_input("Phone Number")
@@ -254,32 +228,21 @@ def add_supplier_dialog():
             s_iban = st.text_input("IBAN")
             s_bank = st.text_input("Bank Name")
 
-        st.divider()
         if st.form_submit_button("💾 Save Supplier", type="primary", use_container_width=True):
             if s_code and s_name:
-                try:
-                    conn_dialog.cursor().execute(
-                        "INSERT INTO suppliers (code, name, supplier_type, contact_person, phone, email, lead_time_days, cui, reg_com, address, iban, bank_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", 
-                        (s_code.strip(), s_name.strip(), s_type, s_contact.strip(), s_phone.strip(), s_email.strip(), s_lt, s_cui.strip(), s_reg.strip(), s_address.strip(), s_iban.strip(), s_bank.strip())
-                    )
-                    conn_dialog.commit()
-                    st.success("Supplier saved successfully!")
-                    for k in ['anaf_cui', 'anaf_name', 'anaf_address', 'anaf_reg']:
-                        if k in st.session_state: del st.session_state[k]
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
-            else:
-                st.warning("Please fill in Code and Name!")
+                conn_dialog.cursor().execute("INSERT INTO suppliers (code, name, supplier_type, contact_person, phone, email, lead_time_days, cui, reg_com, address, iban, bank_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", 
+                                            (s_code.strip(), s_name.strip(), s_type, s_contact.strip(), s_phone.strip(), s_email.strip(), s_lt, s_cui.strip(), s_reg.strip(), s_address.strip(), s_iban.strip(), s_bank.strip()))
+                conn_dialog.commit()
+                for k in ['s_anaf_cui', 's_anaf_name', 's_anaf_address', 's_anaf_reg']:
+                    if k in st.session_state: del st.session_state[k]
+                st.success("Supplier saved!"); st.rerun()
 
-# DIALOG MODAL POP-UP FOR EDITING SUPPLIER
 @st.dialog("✏️ Edit Supplier Details")
 def edit_supplier_dialog(supp_id):
     conn_dialog = get_db()
     cursor = conn_dialog.cursor()
     cursor.execute("SELECT code, name, supplier_type, contact_person, phone, email, lead_time_days, cui, reg_com, address, iban, bank_name FROM suppliers WHERE id = ?", (supp_id,))
     row = cursor.fetchone()
-    
     if row:
         with st.form("edit_supplier_form"):
             col1, col2 = st.columns(2)
@@ -288,8 +251,7 @@ def edit_supplier_dialog(supp_id):
                 e_cui = st.text_input("CUI / Tax ID", value=row[7] if row[7] else "")
                 e_name = st.text_input("Supplier Name *", value=row[1])
                 e_reg = st.text_input("Reg. Com.", value=row[8] if row[8] else "")
-                type_opts = ["Raw Material Supplier", "Buy Parts Supplier", "General / Both"]
-                e_type = st.selectbox("Type of Supplier *", type_opts, index=type_opts.index(row[2]) if row[2] in type_opts else 0)
+                e_type = st.selectbox("Type of Supplier *", ["Raw Material Supplier", "Buy Parts Supplier", "General / Both"], index=["Raw Material Supplier", "Buy Parts Supplier", "General / Both"].index(row[2]) if row[2] in ["Raw Material Supplier", "Buy Parts Supplier", "General / Both"] else 0)
                 e_address = st.text_area("Address", value=row[9] if row[9] else "", height=105)
             with col2:
                 e_contact = st.text_input("Contact Person", value=row[3] if row[3] else "")
@@ -307,6 +269,82 @@ def edit_supplier_dialog(supp_id):
                 conn_dialog.commit(); st.success("Updated!"); st.rerun()
             if c_del.form_submit_button("🗑️ Delete", use_container_width=True):
                 cursor.execute("DELETE FROM suppliers WHERE id = ?", (supp_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
+
+# DIALOG MODAL POP-UP FOR ADDING CUSTOMERS WITH ANAF
+@st.dialog("➕ Add New Customer")
+def add_customer_dialog():
+    conn_dialog = get_db()
+    st.subheader("🔍 Auto-Complete via ANAF API")
+    col_anaf1, col_anaf2 = st.columns([3, 1])
+    with col_anaf1: search_cui = st.text_input("CUI (RO...)", key="c_cui_input")
+    with col_anaf2:
+        st.write(""); st.write("")
+        if st.button("Search ANAF", key="btn_c_anaf", use_container_width=True):
+            if search_cui:
+                with st.spinner('Se caută...'):
+                    data, err = fetch_anaf_data(search_cui)
+                if data:
+                    st.session_state['c_anaf_name'] = data['name']; st.session_state['c_anaf_address'] = data['address']
+                    st.session_state['c_anaf_reg'] = data['reg_com']; st.session_state['c_anaf_cui'] = search_cui
+                    st.success("Date descărcate!")
+                else: st.error(err)
+    st.divider()
+    with st.form("add_customer_form"):
+        st.subheader("Customer Details")
+        col1, col2 = st.columns(2)
+        with col1:
+            c_code = st.text_input("Customer Code *", placeholder="e.g. CUST001")
+            c_cui = st.text_input("CUI / Tax ID *", value=st.session_state.get('c_anaf_cui', ''))
+            c_name = st.text_input("Customer Name *", value=st.session_state.get('c_anaf_name', ''))
+            c_reg = st.text_input("Reg. Com. (J.../...)", value=st.session_state.get('c_anaf_reg', ''))
+            c_address = st.text_area("Address", value=st.session_state.get('c_anaf_address', ''), height=105)
+        with col2:
+            c_contact = st.text_input("Contact Person")
+            c_phone = st.text_input("Phone Number")
+            c_email = st.text_input("E-mail Address")
+            st.markdown("##### Banking Details")
+            c_iban = st.text_input("IBAN")
+            c_bank = st.text_input("Bank Name")
+
+        if st.form_submit_button("💾 Save Customer", type="primary", use_container_width=True):
+            if c_code and c_name:
+                conn_dialog.cursor().execute("INSERT INTO customers (code, name, cui, reg_com, address, iban, bank_name, contact_person, phone, email) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", 
+                                            (c_code.strip(), c_name.strip(), c_cui.strip(), c_reg.strip(), c_address.strip(), c_iban.strip(), c_bank.strip(), c_contact.strip(), c_phone.strip(), c_email.strip()))
+                conn_dialog.commit()
+                for k in ['c_anaf_cui', 'c_anaf_name', 'c_anaf_address', 'c_anaf_reg']:
+                    if k in st.session_state: del st.session_state[k]
+                st.success("Customer saved!"); st.rerun()
+
+@st.dialog("✏️ Edit Customer Details")
+def edit_customer_dialog(cust_id):
+    conn_dialog = get_db()
+    cursor = conn_dialog.cursor()
+    cursor.execute("SELECT code, name, cui, reg_com, address, iban, bank_name, contact_person, phone, email FROM customers WHERE id = ?", (cust_id,))
+    row = cursor.fetchone()
+    if row:
+        with st.form("edit_customer_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                e_code = st.text_input("Customer Code *", value=row[0])
+                e_cui = st.text_input("CUI / Tax ID", value=row[2] if row[2] else "")
+                e_name = st.text_input("Customer Name *", value=row[1])
+                e_reg = st.text_input("Reg. Com.", value=row[3] if row[3] else "")
+                e_address = st.text_area("Address", value=row[4] if row[4] else "", height=105)
+            with col2:
+                e_contact = st.text_input("Contact Person", value=row[7] if row[7] else "")
+                e_phone = st.text_input("Phone Number", value=row[8] if row[8] else "")
+                e_email = st.text_input("E-mail Address", value=row[9] if row[9] else "")
+                st.markdown("##### Banking Details")
+                e_iban = st.text_input("IBAN", value=row[5] if row[5] else "")
+                e_bank = st.text_input("Bank Name", value=row[6] if row[6] else "")
+
+            c_save, c_del = st.columns([8, 2])
+            if c_save.form_submit_button("💾 Save Changes", type="primary", use_container_width=True):
+                cursor.execute("UPDATE customers SET code=?, name=?, cui=?, reg_com=?, address=?, iban=?, bank_name=?, contact_person=?, phone=?, email=? WHERE id=?", 
+                               (e_code, e_name, e_cui, e_reg, e_address, e_iban, e_bank, e_contact, e_phone, e_email, cust_id))
+                conn_dialog.commit(); st.success("Updated!"); st.rerun()
+            if c_del.form_submit_button("🗑️ Delete", use_container_width=True):
+                cursor.execute("DELETE FROM customers WHERE id = ?", (cust_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
 
 # ==========================================
 # PAGE ROUTING
@@ -327,7 +365,6 @@ elif active_page == "Stock":
         subtabs_html += f'<a href="?page=Stock&subtab={t_k}" target="_self" class="{"mrp-subtab-active" if active_subtab == t_k else "mrp-subtab"}">{t_l}</a>'
     st.markdown(subtabs_html + '</div>', unsafe_allow_html=True)
 
-    # --- TAB 1: RAW MATERIALS ---
     if active_subtab == "Raw_Materials" or active_subtab == "Items":
         c1, c2, c3 = st.columns([6, 2, 2])
         with c1: st.markdown("##### Raw Materials Inventory")
@@ -371,7 +408,6 @@ elif active_page == "Stock":
             with col_a2:
                 if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_stock_dialog(selected_ids)
 
-    # --- TAB 2: BUY PARTS ---
     elif active_subtab == "Buy_Parts":
         st.markdown("##### Purchased Parts & Fasteners")
         if st.button("➕ Add Item", type="primary"): add_new_item_dialog("Buy Part")
@@ -404,7 +440,6 @@ elif active_page == "Stock":
             with col_a2:
                 if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_stock_dialog(selected_ids)
 
-    # --- TAB 3: FINISHED GOODS ---
     elif active_subtab == "Finished_Goods":
         st.markdown("##### Finished Goods & Subassemblies")
         if st.button("➕ Add Item", type="primary"): add_new_item_dialog("Finished Good / Subassembly")
@@ -437,17 +472,14 @@ elif active_page == "Stock":
             with col_a2:
                 if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_stock_dialog(selected_ids)
 
-    # --- TAB 4: SUPPLIERS ---
     elif active_subtab == "Suppliers":
         c_head, c_btn = st.columns([8, 2])
-        with c_head:
-            st.markdown("##### Supplier Management")
+        with c_head: st.markdown("##### Supplier Management")
         with c_btn:
             if st.button("➕ Add Supplier", type="primary", use_container_width=True): add_supplier_dialog()
         
         st.write("")
         df_s = pd.read_sql_query("SELECT id as ID, code as Code, cui as 'CUI', name as 'Supplier Name', supplier_type as 'Supplier Type', contact_person as 'Contact Person', phone as Phone, email as Email, lead_time_days as 'Lead Time (Days)' FROM suppliers ORDER BY name", conn)
-        
         sel_supp = st.dataframe(df_s, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_supp", column_config={"ID": None})
         
         if sel_supp and len(sel_supp.selection.rows) > 0:
@@ -456,21 +488,54 @@ elif active_page == "Stock":
             col_a1, col_a2, _ = st.columns([2, 2, 8])
             with col_a1:
                 if len(selected_ids) == 1:
-                    if st.button("✏️ Edit Selected", use_container_width=True): 
-                        edit_supplier_dialog(selected_ids[0])
+                    if st.button("✏️ Edit Selected", use_container_width=True): edit_supplier_dialog(selected_ids[0])
             with col_a2:
-                if st.button("🗑️ Delete Selected", use_container_width=True): 
-                    bulk_delete_suppliers_dialog(selected_ids)
+                if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_suppliers_dialog(selected_ids)
 
-    # --- TAB 5: WAREHOUSES ---
     elif active_subtab == "Warehouses":
         st.markdown("##### Warehouses"); df_w = pd.read_sql_query("SELECT * FROM warehouses", conn); st.dataframe(df_w, hide_index=True)
-    
-    # --- TAB 6: UNITS ---
     elif active_subtab == "Units":
         st.markdown("##### Units"); df_u = pd.read_sql_query("SELECT * FROM units", conn); st.dataframe(df_u, hide_index=True)
 
-elif active_page in ["BOM", "RFQ"]:
-    st.info(f"{active_page} module ready for configuration.")
+# ==========================================
+# RFQ & ORDERS MODULE
+# ==========================================
+elif active_page == "RFQ":
+    active_subtab_rfq = query_params.get("subtab", "Customers")
+    
+    subtabs_rfq_html = '<div class="mrp-subtabs">'
+    for t_k, t_l in [("Customers", "👥 Customers"), ("Quotations", "📄 Quotations"), ("Orders", "🛒 Sales Orders")]:
+        subtabs_rfq_html += f'<a href="?page=RFQ&subtab={t_k}" target="_self" class="{"mrp-subtab-active" if active_subtab_rfq == t_k else "mrp-subtab"}">{t_l}</a>'
+    st.markdown(subtabs_rfq_html + '</div>', unsafe_allow_html=True)
+    
+    # --- CUSTOMERS TAB ---
+    if active_subtab_rfq == "Customers":
+        c_head, c_btn = st.columns([8, 2])
+        with c_head: st.markdown("##### Customer Database")
+        with c_btn:
+            if st.button("➕ Add Customer", type="primary", use_container_width=True): add_customer_dialog()
+            
+        st.write("")
+        df_c = pd.read_sql_query("SELECT id as ID, code as Code, cui as 'CUI', name as 'Customer Name', reg_com as 'Reg. Com.', contact_person as 'Contact Person', phone as Phone, email as Email FROM customers ORDER BY name", conn)
+        
+        sel_cust = st.dataframe(df_c, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_cust", column_config={"ID": None})
+        
+        if sel_cust and len(sel_cust.selection.rows) > 0:
+            selected_ids = [int(df_c.iloc[i]['ID']) for i in sel_cust.selection.rows]
+            st.info(f"☑️ Selected {len(selected_ids)} customer(s)")
+            col_a1, col_a2, _ = st.columns([2, 2, 8])
+            with col_a1:
+                if len(selected_ids) == 1:
+                    if st.button("✏️ Edit Selected", use_container_width=True): edit_customer_dialog(selected_ids[0])
+            with col_a2:
+                if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_customers_dialog(selected_ids)
+                
+    elif active_subtab_rfq == "Quotations":
+        st.info("Quotations functionality will be added here.")
+    elif active_subtab_rfq == "Orders":
+        st.info("Sales Orders functionality will be added here.")
+
+elif active_page == "BOM":
+    st.info("Production & BOM module is ready for configuration.")
 
 conn.close()
