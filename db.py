@@ -3,10 +3,10 @@ import pandas as pd
 import re
 
 def init_custom_db():
-    # Permitem accesul Multi-Thread pentru a rezolva eroarea din Pop-Up-uri
     conn = sqlite3.connect('can_prod_v2.db', check_same_thread=False)
     cursor = conn.cursor()
     
+    # --- SUPPLIERS TABLE ---
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS suppliers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -22,6 +22,23 @@ def init_custom_db():
         phone VARCHAR(100),
         email VARCHAR(255),
         lead_time_days INTEGER DEFAULT 0
+    );
+    """)
+
+    # --- CUSTOMERS TABLE ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS customers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code VARCHAR(50) UNIQUE NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        cui VARCHAR(50),
+        reg_com VARCHAR(50),
+        address TEXT,
+        iban VARCHAR(100),
+        bank_name VARCHAR(100),
+        contact_person VARCHAR(255),
+        phone VARCHAR(100),
+        email VARCHAR(255)
     );
     """)
 
@@ -72,7 +89,7 @@ def init_custom_db():
         if col_name not in existing_cols:
             cursor.execute(f"ALTER TABLE stock_items ADD COLUMN {col_name} {col_type}")
 
-    # AUTO-REPAIR SCHEMA FOR SUPPLIERS (ANAF INTEGRATION)
+    # AUTO-REPAIR SCHEMA FOR SUPPLIERS
     cursor.execute("PRAGMA table_info(suppliers)")
     existing_supp_cols = [col[1] for col in cursor.fetchall()]
     missing_supp_cols = {
@@ -87,6 +104,7 @@ def init_custom_db():
         if col_name not in existing_supp_cols:
             cursor.execute(f"ALTER TABLE suppliers ADD COLUMN {col_name} {col_type}")
 
+    # DEFAULT DATA
     cursor.execute("SELECT COUNT(*) FROM units")
     if cursor.fetchone()[0] == 0:
         for c, n in [('Ml', 'Linear Meters'), ('kg', 'Kilograms'), ('pcs', 'Pieces'), ('m2', 'Square Meters'), ('l', 'Liters')]:
@@ -96,6 +114,11 @@ def init_custom_db():
     if cursor.fetchone()[0] == 0:
         for c, n, t in [('WH-MAIN', 'Main Central Warehouse', 'Internal Warehouse'), ('WH-CUST', 'Customer Virtual Location', 'Customer Virtual Storage')]:
             cursor.execute("INSERT INTO warehouses (code, name, location_type) VALUES (?, ?, ?)", (c, n, t))
+
+    cursor.execute("SELECT COUNT(*) FROM customers")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("INSERT INTO customers (code, name, cui, contact_person, email) VALUES (?, ?, ?, ?, ?)", 
+                       ('CUST-001', 'Client Generic SRL', 'RO123456', 'Ion Client', 'contact@client.ro'))
 
     conn.commit()
     populate_missing_uniq_codes(conn)
@@ -245,13 +268,6 @@ def import_mrpeasy_items(df):
         w_row = cursor.fetchone()
         warehouse_id = w_row[0] if w_row else cursor.execute("INSERT INTO warehouses (code, name, location_type) VALUES (?, ?, ?)", (f"WH-{w_name[:5].upper().replace(' ', '')}", w_name, 'Internal Warehouse')).lastrowid
 
-        v_name = str(row.get('vendor name', '')).strip()
-        supplier_id = None
-        if v_name and v_name != 'nan':
-            cursor.execute("SELECT id FROM suppliers WHERE name = ?", (v_name,))
-            s_row = cursor.fetchone()
-            supplier_id = s_row[0] if s_row else cursor.execute("INSERT INTO suppliers (code, name, supplier_type) VALUES (?, ?, ?)", (f"SUP-{v_name[:5].upper()}", v_name, "General / Both")).lastrowid
-
         price = safe_float(row.get('cost', 0))
         sell_price = safe_float(row.get('selling price', 0))
         weight_val = safe_float(row.get('weight', 0))
@@ -262,12 +278,12 @@ def import_mrpeasy_items(df):
         cursor.execute("SELECT id FROM stock_items WHERE code = ? OR uniq_code = ?", (item_code, uniq_code))
         ex = cursor.fetchone()
         if ex:
-            cursor.execute("""UPDATE stock_items SET uniq_code=?, name=?, category=?, sub_group=?, supplier_id=?, unit_id=?, warehouse_id=?, purchase_price=?, selling_price=?, specific_weight=?, weight_unit=?, current_stock=?, min_stock=? WHERE id=?""", 
-                           (uniq_code, clean_name, category, sub_group, supplier_id, unit_id, warehouse_id, price, sell_price, weight_val, weight_unit, stock, min_st, ex[0]))
+            cursor.execute("""UPDATE stock_items SET uniq_code=?, name=?, category=?, sub_group=?, unit_id=?, warehouse_id=?, purchase_price=?, selling_price=?, specific_weight=?, weight_unit=?, current_stock=?, min_stock=? WHERE id=?""", 
+                           (uniq_code, clean_name, category, sub_group, unit_id, warehouse_id, price, sell_price, weight_val, weight_unit, stock, min_st, ex[0]))
             upd += 1
         else:
-            cursor.execute("""INSERT INTO stock_items (uniq_code, code, name, category, sub_group, supplier_id, unit_id, warehouse_id, purchase_price, selling_price, specific_weight, weight_unit, current_stock, min_stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", 
-                           (uniq_code, item_code, clean_name, category, sub_group, supplier_id, unit_id, warehouse_id, price, sell_price, weight_val, weight_unit, stock, min_st))
+            cursor.execute("""INSERT INTO stock_items (uniq_code, code, name, category, sub_group, unit_id, warehouse_id, purchase_price, selling_price, specific_weight, weight_unit, current_stock, min_stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", 
+                           (uniq_code, item_code, clean_name, category, sub_group, unit_id, warehouse_id, price, sell_price, weight_val, weight_unit, stock, min_st))
             ins += 1
     conn.commit()
     return ins, upd
