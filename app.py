@@ -774,12 +774,23 @@ def manage_product_bom_dialog(selected_prod_id=None):
         
     prod_dict = {f"{r['uniq_code']} - {r['name']}": r['id'] for _, r in df_prods.iterrows()}
     
+    # ---------------------------------------------------------
+    # REPARARE CRUCIALĂ: Determinarea corectă a produsului selectat
+    # ---------------------------------------------------------
+    target_id = selected_prod_id or st.session_state.get("active_bom_dialog_prod_id")
+    
     idx_prod = 0
-    if selected_prod_id:
-        curr_keys = [k for k, v in prod_dict.items() if v == selected_prod_id]
-        if curr_keys: idx_prod = list(prod_dict.keys()).index(curr_keys[0])
+    if target_id:
+        curr_keys = [k for k, v in prod_dict.items() if v == target_id]
+        if curr_keys:
+            idx_prod = list(prod_dict.keys()).index(curr_keys[0])
 
-    sel_prod_key = st.selectbox("Select Product (Finished Good) *", list(prod_dict.keys()), index=idx_prod)
+    sel_prod_key = st.selectbox(
+        "Select Product (Finished Good) *", 
+        list(prod_dict.keys()), 
+        index=idx_prod,
+        key="bom_dialog_select_product"
+    )
     target_prod_id = prod_dict[sel_prod_key]
     st.session_state["active_bom_dialog_prod_id"] = target_prod_id
 
@@ -1549,7 +1560,9 @@ elif active_page == "BOM":
                         cursor_page.execute("SELECT product_item_id FROM product_boms WHERE id = ?", (selected_ids[0],))
                         p_row = cursor_page.fetchone()
                         if p_row and st.button("✏️ Edit Selected Recipe", use_container_width=True): 
-                            manage_product_bom_dialog(p_row[0])
+                            st.session_state["active_bom_dialog_prod_id"] = p_row[0]
+                            st.session_state["keep_bom_dialog_open"] = True
+                            st.rerun()
                 with col_a2:
                     if st.button("🗑️ Delete Selected Recipe", use_container_width=True): 
                         bulk_delete_boms_dialog(selected_ids)
