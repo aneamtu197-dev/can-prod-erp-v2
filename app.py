@@ -108,6 +108,39 @@ init_custom_db()
 def get_db():
     return sqlite3.connect('can_prod_v2.db')
 
+# Automatic Unique Code Generator based on Category & Sub-Group
+def generate_unique_item_code(conn, category, sub_group=""):
+    cursor = conn.cursor()
+    cat_upper = category.upper()
+    
+    if 'RAW' in cat_upper:
+        if sub_group == 'Tabla':
+            prefix = 'RM-TB-'
+        elif sub_group == 'Teava':
+            prefix = 'RM-TV-'
+        elif sub_group == 'Europrofile':
+            prefix = 'RM-EP-'
+        else:
+            prefix = 'RM-GEN-'
+    elif 'BUY' in cat_upper:
+        prefix = 'BP-'
+    elif 'FINISHED' in cat_upper or 'SUB' in cat_upper:
+        prefix = 'FG-'
+    else:
+        prefix = 'ITM-'
+
+    cursor.execute("SELECT code FROM stock_items WHERE code LIKE ?", (f"{prefix}%",))
+    existing_codes = cursor.fetchall()
+    
+    max_num = 0
+    for (c_val,) in existing_codes:
+        num_part = c_val.replace(prefix, '')
+        if num_part.isdigit():
+            max_num = max(max_num, int(num_part))
+            
+    next_num = max_num + 1
+    return f"{prefix}{next_num:04d}"
+
 # Intelligent Item Classifier & Name Cleaner for MRPeasy Import
 def clean_and_classify_item(part_no, desc, group_num):
     text_upper = f"{part_no} {desc}".upper()
@@ -246,14 +279,15 @@ def import_mrpeasy_items(df):
 
     for _, row in df.iterrows():
         code = str(row.get('part no.', row.get('part number', row.get('code', '')))).strip()
-        if not code or code == 'nan':
-            continue
-
         raw_desc = str(row.get('part description', row.get('description', row.get('name', code)))).strip()
         group_num = str(row.get('group number', row.get('group name', row.get('group', '')))).strip()
         
         # Clean Description & Sub-Group Classification
         sub_group, category, clean_name = clean_and_classify_item(code, raw_desc, group_num)
+
+        # Generate Auto-Code if missing or generic
+        if not code or code == 'nan':
+            code = generate_unique_item_code(conn, category, sub_group)
 
         # Unit of Measure
         u_code = str(row.get('uom', row.get('unit of measure', row.get('unit', 'pcs')))).strip()
@@ -330,7 +364,7 @@ def import_mrpeasy_items(df):
     conn.close()
     return imported_count, updated_count
 
-# CALLBACK FUNCTIONS FOR RESETTING FILTERS (PREVENTS STREAMLIT API EXCEPTION)
+# CALLBACK FUNCTIONS FOR RESETTING FILTERS
 def reset_raw_filters_callback():
     st.session_state["f_raw_code"] = ""
     st.session_state["f_raw_name"] = ""
@@ -574,9 +608,11 @@ def add_raw_material_dialog():
         col1, col2 = st.columns(2)
         
         with col1:
-            code = st.text_input("Part No. / Item Code *", placeholder="e.g. TV FI 48.3x4")
-            name = st.text_input("Part Description / Name *", placeholder="e.g. Teava Rotunda FI 48.3x4 mm")
             sub_group = st.selectbox("Main Sub-Group *", ["Tabla", "Teava", "Europrofile", "Raw Materials Diverse"])
+            auto_code = generate_unique_item_code(conn, "RAW MATERIAL", sub_group)
+            
+            code = st.text_input("Part No. / Item Code *", value=auto_code)
+            name = st.text_input("Part Description / Name *", placeholder="e.g. Teava Rotunda FI 48.3x4 mm")
             
             df_u_opts = pd.read_sql_query("SELECT id, code, name FROM units ORDER BY code", conn)
             u_dict = {f"{r['code']} ({r['name']})": r['id'] for _, r in df_u_opts.iterrows()}
@@ -620,6 +656,53 @@ def add_raw_material_dialog():
                     st.error(f"Error: {e}")
             else:
                 st.warning("Please fill in Part No. and Name!")
+
+# Dialog Modal Pop-Up pentru Adăugare Manuală Buy Part
+@st.dialog("➕ Add New Buy Part")
+def add_buy_part_dialog():
+    with st.form("add_buy_part_form"):
+        st.subheader("Buy Part Characteristics & Specifications")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            auto_code = generate_unique_item_code(conn, "BUY PART")
+            code = st.text_input("Part No. / Item Code *", value=auto_code)
+            name = st.text_input("Part Description / Name *", placeholder="e.g. Surub M8x40 Complet Filetat")
+            
+            df_u_opts = pd.read_sql_query("SELECT id, code, name FROM units ORDER BY code", conn)
+            u_dict = {f"{r['code']} ({r['name']})": r['id'] for _, r in df_u_opts.iterrows()}
+            selected_u = st.selectbox("Unit of Measure (UoM) *", list(u_dict.keys()))
+
+            df_s_opts = pd.read_sql_query("SELECT id, name FROM suppliers ORDER BY name", conn)
+            s_dict = {r['name']: r['id'] for _, r in df_s_opts.iterrows()}
+            selected_s = st.selectbox("Preferred Supplier", list(s_dict.keys()) if s_dict else ["No Supplier"])
+
+        with col2:
+            price = st.number_input("Purchase Price (€)", min_value=0.0, value=0.0, step=0.1)
+            selling_p = st.number_input("Selling Price (€)", min_value=0.0, value=0.0, step=0.1)
+
+            df_w_opts = pd.read_sql_query("SELECT id, name FROM warehouses ORDER BY name", conn)
+            w_dict = {r['name']: r['id'] for _, r in df_w_opts.iterrows()}
+            selected_w = st.selectbox("Initial Warehouse Location", list(w_dict.keys()))
+
+            stock_qty = st.number_input("Initial Stock Quantity", min_value=0.0, value=0.0)
+            min_stock_qty = st.number_input("Reorder Point / Min Stock", min_value=0.0, value=0.0)
+
+        st.divider()
+        if st.form_submit_button("💾 Save Buy Part", type="primary", use_container_width=True):
+            if code and name:
+                try:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        INSERT INTO stock_items 
+                        (code, name, category, sub_group, supplier_id, unit_id, warehouse_id, purchase_price, selling_price, current_stock, min_stock)
+                        VALUES (?, ?, 'BUY PART', 'Buy Parts', ?, ?, ?, ?, ?, ?, ?)
+                    """, (code.strip(), name.strip(), s_dict.get(selected_s), u_dict.get(selected_u), w_dict.get(selected_w), price, selling_p, stock_qty, min_stock_qty))
+                    conn.commit()
+                    st.success(f"Buy Part {code} saved successfully!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
 
 # ==========================================
 # 1. HOME SCREEN (LAUNCHPAD)
@@ -840,41 +923,8 @@ elif active_page == "Stock":
             st.markdown("##### Purchased Parts & Fasteners (Buy Parts)")
         
         with c_btn1:
-            with st.popover("➕ Add Buy Part", use_container_width=True):
-                with st.form("add_buy_form"):
-                    code = st.text_input("Part No. / Item Code *")
-                    name = st.text_input("Part Description *")
-                    
-                    df_s_opts = pd.read_sql_query("SELECT id, name FROM suppliers ORDER BY name", conn)
-                    s_dict = {r['name']: r['id'] for _, r in df_s_opts.iterrows()}
-                    selected_s = st.selectbox("Preferred Supplier", list(s_dict.keys()) if s_dict else ["No Supplier"])
-                    
-                    df_u_opts = pd.read_sql_query("SELECT id, code, name FROM units ORDER BY code", conn)
-                    u_dict = {f"{r['code']} ({r['name']})": r['id'] for _, r in df_u_opts.iterrows()}
-                    selected_u = st.selectbox("Unit of Measure", list(u_dict.keys()))
-
-                    df_w_opts = pd.read_sql_query("SELECT id, name FROM warehouses ORDER BY name", conn)
-                    w_dict = {r['name']: r['id'] for _, r in df_w_opts.iterrows()}
-                    selected_w = st.selectbox("Initial Warehouse", list(w_dict.keys()))
-
-                    price = st.number_input("Purchase Price (€)", min_value=0.0, value=0.0, step=0.1)
-                    sell_p = st.number_input("Selling Price (€)", min_value=0.0, value=0.0, step=0.1)
-                    stock_qty = st.number_input("Current Stock Quantity", min_value=0.0, value=0.0)
-
-                    if st.form_submit_button("💾 Save Buy Part"):
-                        if code and name:
-                            try:
-                                cursor = conn.cursor()
-                                cursor.execute("""
-                                    INSERT INTO stock_items 
-                                    (code, name, category, sub_group, supplier_id, unit_id, warehouse_id, purchase_price, selling_price, current_stock)
-                                    VALUES (?, ?, 'BUY PART', 'Buy Parts', ?, ?, ?, ?, ?, ?)
-                                """, (code.strip(), name.strip(), s_dict.get(selected_s), u_dict.get(selected_u), w_dict.get(selected_w), price, sell_p, stock_qty))
-                                conn.commit()
-                                st.success(f"Buy Part {code} saved successfully!")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Error: {e}")
+            if st.button("➕ Add Buy Part (Pop-Up)", use_container_width=True, type="primary"):
+                add_buy_part_dialog()
 
         st.write("")
 
@@ -943,7 +993,8 @@ elif active_page == "Stock":
         with c_btn1:
             with st.popover("➕ Add Finished Good", use_container_width=True):
                 with st.form("add_finished_form"):
-                    code = st.text_input("Product Code / Part No. *")
+                    auto_fg_code = generate_unique_item_code(conn, "FINISHED GOOD")
+                    code = st.text_input("Product Code / Part No. *", value=auto_fg_code)
                     name = st.text_input("Product Description *")
                     cat = st.selectbox("Category", ["FINISHED GOOD", "SUBASSEMBLY"])
                     
