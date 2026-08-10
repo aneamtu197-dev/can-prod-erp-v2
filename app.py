@@ -65,7 +65,7 @@ def reset_buy_filters_callback():
 def reset_fg_filters_callback():
     for k in ["f_fg_code", "f_fg_name", "f_fg_cat"]: st.session_state[k] = "All Categories" if "cat" in k else ""
 
-# DIALOG MODALS FOR BULK DELETE (FIXED THREADING & SAFE ID HANDLING)
+# DIALOG MODALS FOR BULK DELETE
 @st.dialog("⚠️ Confirm Bulk Delete")
 def bulk_delete_stock_dialog(item_ids):
     st.error(f"Are you sure you want to delete {len(item_ids)} item(s)? This action cannot be undone.")
@@ -493,47 +493,58 @@ def add_operation_dialog():
     fac_dict = {f"{r['name']} ({r['facility_type']})": r['id'] for _, r in df_fac.iterrows()}
     fac_options = ["No Equipment Assigned"] + list(fac_dict.keys())
 
-    with st.form("add_operation_form"):
-        st.subheader("Operation Characteristics")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.text_input("Operation Uniq Code (Auto-Generated) *", value=auto_op_code, disabled=True)
-            op_name = st.text_input("Operation Name *", placeholder="e.g. Debitare laser teava")
-            selected_fac = st.selectbox("Assigned Facility / Equipment", fac_options)
-            cost_unit = st.selectbox("Billing / Cost Unit *", ["Hour", "Sqm (m2)", "Pcs", "Meter"])
-            rate_unit = st.number_input("Rate per Unit (€) *", min_value=0.0, value=25.0, step=1.0)
-            
-        with col2:
-            prod_level = st.number_input("Productivity Level (1.0 = 100%, 0.9 = 90%) *", min_value=0.1, max_value=2.0, value=1.0, step=0.05)
-            operators_cnt = st.number_input("Number of Operators *", min_value=1, value=1)
-            
-            st.markdown("##### Max Capacity Limits")
-            max_day = st.number_input("Max Hours / Day", min_value=0.0, value=8.0 * operators_cnt)
-            max_week = st.number_input("Max Hours / Week", min_value=0.0, value=40.0 * operators_cnt)
-            max_month = st.number_input("Max Hours / Month", min_value=0.0, value=160.0 * operators_cnt)
+    # Session State for Dynamic Capacity Calculation
+    if "op_ops" not in st.session_state: st.session_state["op_ops"] = 1
+    if "op_hrs_per_op" not in st.session_state: st.session_state["op_hrs_per_op"] = 8.0
 
-        st.divider()
-        if st.form_submit_button("💾 Save Operation", type="primary", use_container_width=True):
-            if op_name.strip():
-                cursor = conn_dialog.cursor()
-                cursor.execute("SELECT id FROM operations WHERE name = ?", (op_name.strip(),))
-                if cursor.fetchone():
-                    st.warning(f"⚠️ An operation with the name '{op_name.strip()}' already exists!")
-                else:
-                    fac_id = fac_dict.get(selected_fac) if selected_fac != "No Equipment Assigned" else None
-                    cursor.execute("""
-                        INSERT INTO operations (uniq_code, name, cost_unit, rate_per_unit, productivity_level, max_hours_day, max_hours_week, max_hours_month, operators_count, facility_id)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (auto_op_code, op_name.strip(), cost_unit, rate_unit, prod_level, max_day, max_week, max_month, operators_cnt, fac_id))
-                    conn_dialog.commit(); st.success("Operation saved!"); st.rerun()
+    st.subheader("Operation Characteristics")
+    col1, col2 = st.columns(2)
+    with col1:
+        op_uniq = st.text_input("Operation Uniq Code (Auto-Generated) *", value=auto_op_code, disabled=True)
+        op_name = st.text_input("Operation Name *", placeholder="e.g. Debitare laser teava")
+        selected_fac = st.selectbox("Assigned Facility / Equipment", fac_options)
+        cost_unit = st.selectbox("Billing / Cost Unit *", ["Hour", "Sqm (m2)", "Pcs", "Meter"])
+        rate_unit = st.number_input("Rate per Unit (€) *", min_value=0.0, value=25.0, step=1.0)
+        
+    with col2:
+        prod_level = st.number_input("Productivity Level (1.0 = 100%, 0.9 = 90%) *", min_value=0.1, max_value=2.0, value=1.0, step=0.05)
+        
+        ops_val = st.number_input("Number of Operators *", min_value=1, value=st.session_state["op_ops"], key="input_ops")
+        hrs_per_op_val = st.number_input("Hours / Day per Operator *", min_value=1.0, max_value=24.0, value=st.session_state["op_hrs_per_op"], step=0.5, key="input_hrs_per_op")
+        
+        # Dynamic Calculations
+        calc_day = float(ops_val * hrs_per_op_val)
+        calc_week = float(calc_day * 5.0)
+        calc_month = float(calc_week * 4.0)
+
+        st.markdown("##### Max Capacity Limits (Auto-Calculated)")
+        max_day = st.number_input("Max Hours / Day (Total Workshop)", min_value=0.0, value=calc_day, step=0.5)
+        max_week = st.number_input("Max Hours / Week", min_value=0.0, value=calc_week, step=1.0)
+        max_month = st.number_input("Max Hours / Month", min_value=0.0, value=calc_month, step=5.0)
+
+    st.divider()
+    c_btn_save, c_btn_cancel = st.columns([8, 2])
+    if c_btn_save.button("💾 Save Operation", type="primary", use_container_width=True):
+        if op_name.strip():
+            cursor = conn_dialog.cursor()
+            cursor.execute("SELECT id FROM operations WHERE name = ?", (op_name.strip(),))
+            if cursor.fetchone():
+                st.warning(f"⚠️ An operation with the name '{op_name.strip()}' already exists!")
             else:
-                st.warning("Please fill in Operation Name!")
+                fac_id = fac_dict.get(selected_fac) if selected_fac != "No Equipment Assigned" else None
+                cursor.execute("""
+                    INSERT INTO operations (uniq_code, name, cost_unit, rate_per_unit, productivity_level, hours_per_operator, max_hours_day, max_hours_week, max_hours_month, operators_count, facility_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (auto_op_code, op_name.strip(), cost_unit, rate_unit, prod_level, hrs_per_op_val, max_day, max_week, max_month, ops_val, fac_id))
+                conn_dialog.commit(); st.success("Operation saved!"); st.rerun()
+        else:
+            st.warning("Please fill in Operation Name!")
 
 @st.dialog("✏️ Edit Operation Details")
 def edit_operation_dialog(op_id):
     conn_dialog = get_db()
     cursor = conn_dialog.cursor()
-    cursor.execute("SELECT uniq_code, name, cost_unit, rate_per_unit, productivity_level, max_hours_day, max_hours_week, max_hours_month, operators_count, facility_id FROM operations WHERE id = ?", (op_id,))
+    cursor.execute("SELECT uniq_code, name, cost_unit, rate_per_unit, productivity_level, max_hours_day, max_hours_week, max_hours_month, operators_count, facility_id, hours_per_operator FROM operations WHERE id = ?", (op_id,))
     row = cursor.fetchone()
     
     if row:
@@ -546,34 +557,40 @@ def edit_operation_dialog(op_id):
             curr_f = [k for k, v in fac_dict.items() if v == row[9]]
             if curr_f: curr_fac_name = curr_f[0]
 
-        with st.form("edit_operation_form"):
-            col1, col2 = st.columns(2)
-            with col1:
-                st.text_input("Operation Uniq Code (Read-Only) *", value=row[0], disabled=True)
-                e_name = st.text_input("Operation Name *", value=row[1])
-                e_fac = st.selectbox("Assigned Facility / Equipment", fac_options, index=fac_options.index(curr_fac_name) if curr_fac_name in fac_options else 0)
-                units_list = ["Hour", "Sqm (m2)", "Pcs", "Meter"]
-                e_unit = st.selectbox("Billing / Cost Unit *", units_list, index=units_list.index(row[2]) if row[2] in units_list else 0)
-                e_rate = st.number_input("Rate per Unit (€) *", min_value=0.0, value=safe_float(row[3]))
-            with col2:
-                e_prod = st.number_input("Productivity Level *", min_value=0.1, max_value=2.0, value=safe_float(row[4]))
-                e_ops = st.number_input("Number of Operators *", min_value=1, value=int(row[8]))
-                
-                st.markdown("##### Max Capacity Limits")
-                e_mday = st.number_input("Max Hours / Day", min_value=0.0, value=safe_float(row[5]))
-                e_mweek = st.number_input("Max Hours / Week", min_value=0.0, value=safe_float(row[6]))
-                e_mmonth = st.number_input("Max Hours / Month", min_value=0.0, value=safe_float(row[7]))
+        curr_hrs_per_op = safe_float(row[10]) if len(row) > 10 and row[10] else 8.0
 
-            c_save, c_del = st.columns([8, 2])
-            if c_save.form_submit_button("💾 Save Changes", type="primary", use_container_width=True):
-                fac_id = fac_dict.get(e_fac) if e_fac != "No Equipment Assigned" else None
-                cursor.execute("""
-                    UPDATE operations SET name=?, cost_unit=?, rate_per_unit=?, productivity_level=?, max_hours_day=?, max_hours_week=?, max_hours_month=?, operators_count=?, facility_id=?
-                    WHERE id=?
-                """, (e_name.strip(), e_unit, e_rate, e_prod, e_mday, e_mweek, e_mmonth, e_ops, fac_id, op_id))
-                conn_dialog.commit(); st.success("Updated!"); st.rerun()
-            if c_del.form_submit_button("🗑️ Delete", use_container_width=True):
-                cursor.execute("DELETE FROM operations WHERE id = ?", (op_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
+        col1, col2 = st.columns(2)
+        with col1:
+            st.text_input("Operation Uniq Code (Read-Only) *", value=row[0], disabled=True)
+            e_name = st.text_input("Operation Name *", value=row[1])
+            e_fac = st.selectbox("Assigned Facility / Equipment", fac_options, index=fac_options.index(curr_fac_name) if curr_fac_name in fac_options else 0)
+            units_list = ["Hour", "Sqm (m2)", "Pcs", "Meter"]
+            e_unit = st.selectbox("Billing / Cost Unit *", units_list, index=units_list.index(row[2]) if row[2] in units_list else 0)
+            e_rate = st.number_input("Rate per Unit (€) *", min_value=0.0, value=safe_float(row[3]))
+        with col2:
+            e_prod = st.number_input("Productivity Level *", min_value=0.1, max_value=2.0, value=safe_float(row[4]))
+            e_ops = st.number_input("Number of Operators *", min_value=1, value=int(row[8]))
+            e_hrs_per_op = st.number_input("Hours / Day per Operator *", min_value=1.0, max_value=24.0, value=curr_hrs_per_op, step=0.5)
+            
+            calc_day = float(e_ops * e_hrs_per_op)
+            calc_week = float(calc_day * 5.0)
+            calc_month = float(calc_week * 4.0)
+
+            st.markdown("##### Max Capacity Limits")
+            e_mday = st.number_input("Max Hours / Day (Total Workshop)", min_value=0.0, value=calc_day)
+            e_mweek = st.number_input("Max Hours / Week", min_value=0.0, value=calc_week)
+            e_mmonth = st.number_input("Max Hours / Month", min_value=0.0, value=calc_month)
+
+        c_save, c_del = st.columns([8, 2])
+        if c_save.button("💾 Save Changes", type="primary", use_container_width=True):
+            fac_id = fac_dict.get(e_fac) if e_fac != "No Equipment Assigned" else None
+            cursor.execute("""
+                UPDATE operations SET name=?, cost_unit=?, rate_per_unit=?, productivity_level=?, hours_per_operator=?, max_hours_day=?, max_hours_week=?, max_hours_month=?, operators_count=?, facility_id=?
+                WHERE id=?
+            """, (e_name.strip(), e_unit, e_rate, e_prod, e_hrs_per_op, e_mday, e_mweek, e_mmonth, e_ops, fac_id, op_id))
+            conn_dialog.commit(); st.success("Updated!"); st.rerun()
+        if c_del.button("🗑️ Delete", use_container_width=True):
+            cursor.execute("DELETE FROM operations WHERE id = ?", (op_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
 
 # ==========================================
 # PAGE ROUTING
