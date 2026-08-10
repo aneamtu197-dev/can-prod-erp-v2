@@ -42,6 +42,37 @@ def init_custom_db():
     );
     """)
 
+    # --- PRODUCTION FACILITIES (EQUIPMENT / LOGISTICS) ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS production_facilities (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code VARCHAR(50) UNIQUE NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        facility_type VARCHAR(100) DEFAULT 'Machine',
+        brand_model VARCHAR(255),
+        status VARCHAR(50) DEFAULT 'Operational',
+        next_maintenance_date VARCHAR(50)
+    );
+    """)
+
+    # --- OPERATIONS TABLE ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS operations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uniq_code VARCHAR(50) UNIQUE NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        cost_unit VARCHAR(20) DEFAULT 'Hour',
+        rate_per_unit REAL DEFAULT 0.0,
+        productivity_level REAL DEFAULT 1.0,
+        max_hours_day REAL DEFAULT 8.0,
+        max_hours_week REAL DEFAULT 40.0,
+        max_hours_month REAL DEFAULT 160.0,
+        operators_count INTEGER DEFAULT 1,
+        facility_id INTEGER,
+        FOREIGN KEY (facility_id) REFERENCES production_facilities(id) ON DELETE SET NULL
+    );
+    """)
+
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS units (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,43 +113,25 @@ def init_custom_db():
     );
     """)
 
-    # AUTO-REPAIR SCHEMA FOR STOCK ITEMS
-    cursor.execute("PRAGMA table_info(stock_items)")
-    existing_cols = [col[1] for col in cursor.fetchall()]
-    for col_name, col_type in {'uniq_code': "VARCHAR(100)", 'sub_group': "VARCHAR(100) DEFAULT 'General'", 'selling_price': "REAL DEFAULT 0.0", 'specific_weight': "REAL DEFAULT 0.0", 'weight_unit': "VARCHAR(20) DEFAULT 'kg'"}.items():
-        if col_name not in existing_cols:
-            cursor.execute(f"ALTER TABLE stock_items ADD COLUMN {col_name} {col_type}")
-
-    # AUTO-REPAIR SCHEMA FOR SUPPLIERS
-    cursor.execute("PRAGMA table_info(suppliers)")
-    existing_supp_cols = [col[1] for col in cursor.fetchall()]
-    missing_supp_cols = {
-        'supplier_type': "VARCHAR(100) DEFAULT 'Raw Material Supplier'",
-        'cui': "VARCHAR(50)",
-        'reg_com': "VARCHAR(50)",
-        'address': "TEXT",
-        'iban': "VARCHAR(100)",
-        'bank_name': "VARCHAR(100)"
-    }
-    for col_name, col_type in missing_supp_cols.items():
-        if col_name not in existing_supp_cols:
-            cursor.execute(f"ALTER TABLE suppliers ADD COLUMN {col_name} {col_type}")
-
-    # DEFAULT DATA
+    # DEFAULT UNITS
     cursor.execute("SELECT COUNT(*) FROM units")
     if cursor.fetchone()[0] == 0:
         for c, n in [('Ml', 'Linear Meters'), ('kg', 'Kilograms'), ('pcs', 'Pieces'), ('m2', 'Square Meters'), ('l', 'Liters')]:
             cursor.execute("INSERT INTO units (code, name) VALUES (?, ?)", (c, n))
 
+    # DEFAULT WAREHOUSES
     cursor.execute("SELECT COUNT(*) FROM warehouses")
     if cursor.fetchone()[0] == 0:
         for c, n, t in [('WH-MAIN', 'Main Central Warehouse', 'Internal Warehouse'), ('WH-CUST', 'Customer Virtual Location', 'Customer Virtual Storage')]:
             cursor.execute("INSERT INTO warehouses (code, name, location_type) VALUES (?, ?, ?)", (c, n, t))
 
-    cursor.execute("SELECT COUNT(*) FROM customers")
+    # DEFAULT FACILITIES
+    cursor.execute("SELECT COUNT(*) FROM production_facilities")
     if cursor.fetchone()[0] == 0:
-        cursor.execute("INSERT INTO customers (code, name, cui, contact_person, email) VALUES (?, ?, ?, ?, ?)", 
-                       ('CU00001', 'Client Generic SRL', 'RO123456', 'Ion Client', 'contact@client.ro'))
+        cursor.execute("INSERT INTO production_facilities (code, name, facility_type, brand_model) VALUES (?, ?, ?, ?)",
+                       ('EQ-001', 'Laser Tabla Trumpf', 'Laser Cutting', 'TruLaser 3030'))
+        cursor.execute("INSERT INTO production_facilities (code, name, facility_type, brand_model) VALUES (?, ?, ?, ?)",
+                       ('EQ-002', 'Statie Sudura MIG-MAG', 'Welding Station', 'Kemppi MasterTig'))
 
     conn.commit()
     populate_missing_uniq_codes(conn)
@@ -196,6 +209,19 @@ def generate_unique_customer_code(conn):
                 max_num = max(max_num, int(num_part))
     next_num = max_num + 1
     return f"CU{next_num:05d}"
+
+def generate_unique_operation_code(conn):
+    cursor = conn.cursor()
+    cursor.execute("SELECT uniq_code FROM operations WHERE uniq_code LIKE 'OP-%'")
+    rows = cursor.fetchall()
+    max_num = 0
+    for (c_val,) in rows:
+        if c_val and c_val.startswith('OP-'):
+            num_part = c_val.replace('OP-', '')
+            if num_part.isdigit():
+                max_num = max(max_num, int(num_part))
+    next_num = max_num + 1
+    return f"OP-{next_num:04d}"
 
 def clean_and_classify_item(part_no, desc, group_num):
     text_upper = f"{part_no} {desc}".upper()
