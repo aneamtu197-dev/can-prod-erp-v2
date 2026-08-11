@@ -59,7 +59,6 @@ def get_or_create_product_bom(db_conn, target_prod_id, cust_id=None):
     
     main_bom_id = rows[0][0]
     
-    # If duplicates existed, merge orphan materials and operations to main_bom_id
     if len(rows) > 1:
         other_ids = [r[0] for r in rows[1:]]
         placeholders = ",".join(["?"] * len(other_ids))
@@ -763,10 +762,8 @@ def create_finished_product_dialog():
 @st.dialog("➕ Edit Product BOM Recipe & Routing", width="large")
 def manage_product_bom_dialog(selected_prod_id=None):
     st.session_state["keep_bom_dialog_open"] = False
-    conn_dialog = get_db()
-    cursor = conn_dialog.cursor()
     
-    df_prods = pd.read_sql_query("SELECT id, uniq_code, code, name, customer_id FROM stock_items WHERE category IN ('FINISHED GOOD', 'SUBASSEMBLY') ORDER BY name", conn_dialog)
+    df_prods = pd.read_sql_query("SELECT id, uniq_code, code, name, customer_id FROM stock_items WHERE category IN ('FINISHED GOOD', 'SUBASSEMBLY', 'PRODUSE FINITE') ORDER BY name", conn)
     if len(df_prods) == 0:
         st.warning("Please add Finished Goods in Stock before creating BOM Recipes!")
         st.session_state.pop("active_bom_dialog_prod_id", None)
@@ -791,9 +788,10 @@ def manage_product_bom_dialog(selected_prod_id=None):
     target_prod_id = prod_dict[sel_prod_key]
     st.session_state["active_bom_dialog_prod_id"] = target_prod_id
 
-    df_cust = pd.read_sql_query("SELECT id, name FROM customers ORDER BY name", conn_dialog)
+    df_cust = pd.read_sql_query("SELECT id, name FROM customers ORDER BY name", conn)
     cust_dict = {r['name']: r['id'] for _, r in df_cust.iterrows()}
     
+    cursor = conn.cursor()
     cursor.execute("SELECT uniq_code, name, customer_id FROM stock_items WHERE id = ?", (target_prod_id,))
     row_item = cursor.fetchone()
     target_uniq_code = row_item[0] if row_item else ""
@@ -804,8 +802,8 @@ def manage_product_bom_dialog(selected_prod_id=None):
     curr_c_name = [k for k, v in cust_dict.items() if v == curr_c_id]
     sel_cust_name = st.selectbox("Assigned Customer *", c_keys, index=c_keys.index(curr_c_name[0]) if curr_c_name else 0)
 
-    # GUARANTEED BOM ID FETCH / CONSOLIDATION
-    bom_id = get_or_create_product_bom(conn_dialog, target_prod_id, cust_dict.get(sel_cust_name))
+    # GUARANTEED SINGLE BOM ID FETCH
+    bom_id = get_or_create_product_bom(conn, target_prod_id, cust_dict.get(sel_cust_name))
     
     cursor.execute("SELECT total_material_cost, total_labor_cost, total_production_cost, markup_percent FROM product_boms WHERE id = ?", (bom_id,))
     bom_row = cursor.fetchone()
@@ -817,7 +815,7 @@ def manage_product_bom_dialog(selected_prod_id=None):
     
     with t_mat:
         st.markdown("##### 1. Raw Materials & Buy Parts Required")
-        df_all_mat = pd.read_sql_query("SELECT id, uniq_code, name, purchase_price, unit_id, specific_weight FROM stock_items WHERE category IN ('RAW MATERIAL', 'BUY PART') ORDER BY name", conn_dialog)
+        df_all_mat = pd.read_sql_query("SELECT id, uniq_code, name, purchase_price, unit_id, specific_weight FROM stock_items WHERE UPPER(category) IN ('RAW MATERIAL', 'BUY PART', 'MATERIE PRIMA', 'BUY PARTS') ORDER BY name", conn)
         mat_dict = {f"{r['uniq_code']} - {r['name']}": r['id'] for _, r in df_all_mat.iterrows()}
         mat_options_keys = list(mat_dict.keys())
 
@@ -828,7 +826,7 @@ def manage_product_bom_dialog(selected_prod_id=None):
             JOIN units u ON si.unit_id = u.id
             WHERE bm.bom_id = ?
         """
-        df_bm = pd.read_sql_query(q_bm, conn_dialog, params=[bom_id])
+        df_bm = pd.read_sql_query(q_bm, conn, params=[bom_id])
         if len(df_bm) > 0:
             st.markdown("###### Current BOM Materials List:")
             for _, r_m in df_bm.iterrows():
@@ -851,14 +849,14 @@ def manage_product_bom_dialog(selected_prod_id=None):
                 
                 if (selected_m_id != r_m['material_item_id'] or edit_m_qty != float(r_m['Qty']) or edit_m_cost != float(r_m['Price'])) and c_save_m.button("💾", key=f"save_m_{r_m['ID']}"):
                     cursor.execute("UPDATE bom_materials SET material_item_id = ?, quantity_required = ?, unit_cost = ?, total_cost = ? WHERE id = ?", (selected_m_id, edit_m_qty, edit_m_cost, new_tot_m, r_m['ID']))
-                    conn_dialog.commit()
+                    conn.commit()
                     st.session_state["active_bom_dialog_prod_id"] = target_prod_id
                     st.session_state["keep_bom_dialog_open"] = True
                     st.rerun()
 
                 if c_del_m.button("🗑️", key=f"del_mat_{r_m['ID']}"):
                     cursor.execute("DELETE FROM bom_materials WHERE id = ?", (r_m['ID'],))
-                    conn_dialog.commit()
+                    conn.commit()
                     st.session_state["active_bom_dialog_prod_id"] = target_prod_id
                     st.session_state["keep_bom_dialog_open"] = True
                     st.rerun()
@@ -880,7 +878,7 @@ def manage_product_bom_dialog(selected_prod_id=None):
                 tot_c = float(price * add_mat_qty)
                 cursor.execute("INSERT INTO bom_materials (bom_id, material_item_id, quantity_required, unit_cost, total_cost) VALUES (?, ?, ?, ?, ?)",
                                (bom_id, m_id, add_mat_qty, price, tot_c))
-                conn_dialog.commit()
+                conn.commit()
                 st.session_state["bom_select_version"] += 1
                 st.session_state["active_bom_dialog_prod_id"] = target_prod_id
                 st.session_state["keep_bom_dialog_open"] = True
@@ -890,7 +888,7 @@ def manage_product_bom_dialog(selected_prod_id=None):
 
     with t_ops:
         st.markdown("##### 2. Manufacturing Operations Routing")
-        df_all_ops = pd.read_sql_query("SELECT id, uniq_code, name, rate_per_unit, cost_unit, is_outsourced FROM operations ORDER BY uniq_code", conn_dialog)
+        df_all_ops = pd.read_sql_query("SELECT id, uniq_code, name, rate_per_unit, cost_unit, is_outsourced FROM operations ORDER BY uniq_code", conn)
         op_dict = {f"{r['uniq_code']} - {r['name']}": r['id'] for _, r in df_all_ops.iterrows()}
         op_options_keys = list(op_dict.keys())
         
@@ -901,7 +899,7 @@ def manage_product_bom_dialog(selected_prod_id=None):
             WHERE bo.bom_id = ?
             ORDER BY bo.step_number ASC
         """
-        df_bo = pd.read_sql_query(q_bo, conn_dialog, params=[bom_id])
+        df_bo = pd.read_sql_query(q_bo, conn, params=[bom_id])
         if len(df_bo) > 0:
             st.markdown("###### Current Routing Operations List:")
             for idx_o, r_o in df_bo.iterrows():
@@ -925,7 +923,7 @@ def manage_product_bom_dialog(selected_prod_id=None):
                 
                 if (selected_op_id != r_o['operation_id'] or edit_o_dur != float(r_o['Duration']) or edit_o_rate != float(r_o['Rate'])) and c_save_o.button("💾", key=f"save_o_{r_o['ID']}"):
                     cursor.execute("UPDATE bom_operations SET operation_id = ?, duration_hours = ?, rate_applied = ?, total_cost = ? WHERE id = ?", (selected_op_id, edit_o_dur, edit_o_rate, new_tot_o, r_o['ID']))
-                    conn_dialog.commit()
+                    conn.commit()
                     st.session_state["active_bom_dialog_prod_id"] = target_prod_id
                     st.session_state["keep_bom_dialog_open"] = True
                     st.rerun()
@@ -935,7 +933,7 @@ def manage_product_bom_dialog(selected_prod_id=None):
                     prev_step = df_bo.iloc[idx_o - 1]['Step']
                     cursor.execute("UPDATE bom_operations SET step_number = ? WHERE id = ?", (r_o['Step'], prev_id))
                     cursor.execute("UPDATE bom_operations SET step_number = ? WHERE id = ?", (prev_step, r_o['ID']))
-                    conn_dialog.commit()
+                    conn.commit()
                     st.session_state["active_bom_dialog_prod_id"] = target_prod_id
                     st.session_state["keep_bom_dialog_open"] = True
                     st.rerun()
@@ -944,13 +942,13 @@ def manage_product_bom_dialog(selected_prod_id=None):
                     next_step = df_bo.iloc[idx_o + 1]['Step']
                     cursor.execute("UPDATE bom_operations SET step_number = ? WHERE id = ?", (r_o['Step'], next_id))
                     cursor.execute("UPDATE bom_operations SET step_number = ? WHERE id = ?", (next_step, r_o['ID']))
-                    conn_dialog.commit()
+                    conn.commit()
                     st.session_state["active_bom_dialog_prod_id"] = target_prod_id
                     st.session_state["keep_bom_dialog_open"] = True
                     st.rerun()
                 if c_del_o.button("🗑️", key=f"del_op_{r_o['ID']}"):
                     cursor.execute("DELETE FROM bom_operations WHERE id = ?", (r_o['ID'],))
-                    conn_dialog.commit()
+                    conn.commit()
                     st.session_state["active_bom_dialog_prod_id"] = target_prod_id
                     st.session_state["keep_bom_dialog_open"] = True
                     st.rerun()
@@ -974,7 +972,7 @@ def manage_product_bom_dialog(selected_prod_id=None):
                 next_step = cursor.fetchone()[0]
                 cursor.execute("INSERT INTO bom_operations (bom_id, operation_id, step_number, duration_hours, rate_applied, total_cost) VALUES (?, ?, ?, ?, ?, ?)",
                                (bom_id, o_id, next_step, add_op_dur, rate, tot_c))
-                conn_dialog.commit()
+                conn.commit()
                 st.session_state["bom_select_version"] += 1
                 st.session_state["active_bom_dialog_prod_id"] = target_prod_id
                 st.session_state["keep_bom_dialog_open"] = True
@@ -1050,7 +1048,7 @@ def manage_product_bom_dialog(selected_prod_id=None):
         cursor.execute("UPDATE product_boms SET customer_id=?, total_material_cost=?, total_labor_cost=?, total_production_cost=?, calculated_weight=?, markup_percent=? WHERE id=?",
                        (c_id, tot_mat_cost, tot_lab_cost, tot_prod_cost, calc_weight, markup_val, bom_id))
         cursor.execute("UPDATE stock_items SET customer_id=?, purchase_price=?, selling_price=?, specific_weight=? WHERE id=?", (c_id, tot_prod_cost, final_sell_price, calc_weight, target_prod_id))
-        conn_dialog.commit()
+        conn.commit()
         st.session_state["keep_bom_dialog_open"] = False
         st.session_state["active_bom_dialog_prod_id"] = target_prod_id
         st.success("BOM Recipe & Final Prices successfully saved!")
@@ -1407,7 +1405,7 @@ elif active_page == "Stock":
             LEFT JOIN units u ON si.unit_id = u.id 
             LEFT JOIN customers c ON si.customer_id = c.id
             LEFT JOIN warehouses w ON si.warehouse_id = w.id
-            WHERE si.category IN ('FINISHED GOOD', 'SUBASSEMBLY')
+            WHERE si.category IN ('FINISHED GOOD', 'SUBASSEMBLY', 'PRODUSE FINITE')
         """
         params = []
         if f_fg_code: q_fin += " AND (si.code LIKE ? OR si.uniq_code LIKE ?)"; params.extend([f"%{f_fg_code}%", f"%{f_fg_code}%"])
