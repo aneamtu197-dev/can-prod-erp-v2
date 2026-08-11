@@ -1,13 +1,11 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-
 from db import import_mrpeasy_items
-from dialogs import (
-    reset_raw_filters_callback, reset_buy_filters_callback, reset_fg_filters_callback,
-    get_selected_ids, bulk_delete_stock_dialog, bulk_delete_suppliers_dialog, bulk_delete_warehouses_dialog,
-    add_new_item_dialog, edit_item_dialog, add_supplier_dialog, edit_supplier_dialog,
-    add_warehouse_dialog, edit_warehouse_dialog, create_finished_product_dialog
+from dialogs_utils import reset_raw_filters_callback, reset_buy_filters_callback, reset_fg_filters_callback, get_selected_ids, bulk_delete_stock_dialog, bulk_delete_suppliers_dialog, bulk_delete_warehouses_dialog
+from dialogs_stock import add_new_item_dialog, edit_item_dialog, add_warehouse_dialog, edit_warehouse_dialog
+from dialogs_partners import add_supplier_dialog, edit_supplier_dialog
+from dialogs_bom import create_finished_product_dialog
 )
 
 def render_stock_page(conn, active_subtab):
