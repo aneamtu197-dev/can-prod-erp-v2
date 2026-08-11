@@ -1259,7 +1259,7 @@ def edit_operation_dialog(op_id):
                 e_mat_supplied = st.radio("Material Provision *", mat_opts, index=curr_mat_idx)
 
         c_save, c_del = st.columns([8, 2])
-        if c_save.form_submit_button("💾 Save Changes", type="primary", use_container_width=True):
+        if c_save.button("💾 Save Changes", type="primary", use_container_width=True):
             if not is_outsourced:
                 fac_id = fac_dict.get(e_fac) if e_fac != "No Equipment Assigned" else None
                 cursor.execute("""
@@ -1327,7 +1327,7 @@ elif active_page == "Stock":
         if f_raw_supp != "All Suppliers": q_raw += " AND s.name = %s"; params.append(f_raw_supp)
         if f_raw_uom != "All UoMs": q_raw += " AND u.code = %s"; params.append(f_raw_uom)
         
-        df_raw = pd.read_sql_query(q_raw, conn, params=params)
+        df_raw = pd.read_sql_query(q_raw, conn, params=params if params else None)
         sel = st.dataframe(df_raw, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_raw")
         
         if sel and len(sel.selection.rows) > 0:
@@ -1360,7 +1360,7 @@ elif active_page == "Stock":
         if f_buy_name: q_buy += " AND si.name LIKE %s"; params.append(f"%{f_buy_name}%")
         if f_buy_supp != "All Suppliers": q_buy += " AND s.name = %s"; params.append(f_buy_supp)
         
-        df_buy = pd.read_sql_query(q_buy, conn, params=params)
+        df_buy = pd.read_sql_query(q_buy, conn, params=params if params else None)
         sel = st.dataframe(df_buy, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_buy")
         
         if sel and len(sel.selection.rows) > 0:
@@ -1414,7 +1414,7 @@ elif active_page == "Stock":
         if f_fg_name: q_fin += " AND si.name LIKE %s"; params.append(f"%{f_fg_name}%")
         if f_fg_cat != "All Categories": q_fin += " AND si.category = %s"; params.append(f_fg_cat)
 
-        df_fin = pd.read_sql_query(q_fin, conn, params=params)
+        df_fin = pd.read_sql_query(q_fin, conn, params=params if params else None)
         sel = st.dataframe(df_fin, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_fin", 
                            column_config={
                                "BOM Cost (€)": st.column_config.NumberColumn("BOM Cost (€)", format="%.2f €"), 
@@ -1533,7 +1533,7 @@ elif active_page == "BOM":
 
         q_boms_clean += " ORDER BY si.name"
 
-        df_boms = pd.read_sql_query(q_boms_clean, conn, params=params_b)
+        df_boms = pd.read_sql_query(q_boms_clean, conn, params=params_b if params_b else None)
         
         sel_boms = st.dataframe(
             df_boms, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_boms",
