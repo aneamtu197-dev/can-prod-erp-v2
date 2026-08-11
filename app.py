@@ -18,7 +18,7 @@ st.set_page_config(page_title="CAN Prod ERP Custom", layout="wide", initial_side
 init_custom_db()
 load_css()
 
-# Inject Custom CSS for Resizable & Wide Dialog Modals
+# Inject Custom CSS for Resizable Dialog Modals
 st.markdown("""
 <style>
     div[data-testid="stDialog"] > div {
@@ -815,7 +815,7 @@ def manage_product_bom_dialog(selected_prod_id=None):
     
     with t_mat:
         st.markdown("##### 1. Raw Materials & Buy Parts Required")
-        df_all_mat = pd.read_sql_query("SELECT id, uniq_code, name, purchase_price, unit_id, specific_weight FROM stock_items WHERE UPPER(category) IN ('RAW MATERIAL', 'BUY PART', 'MATERIE PRIMA', 'BUY PARTS') ORDER BY name", conn)
+        df_all_mat = pd.read_sql_query("SELECT id, uniq_code, name, purchase_price, unit_id, specific_weight FROM stock_items WHERE UPPER(category) NOT IN ('FINISHED GOOD', 'SUBASSEMBLY', 'PRODUSE FINITE') ORDER BY name", conn)
         mat_dict = {f"{r['uniq_code']} - {r['name']}": r['id'] for _, r in df_all_mat.iterrows()}
         mat_options_keys = list(mat_dict.keys())
 
