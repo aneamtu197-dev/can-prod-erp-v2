@@ -175,27 +175,35 @@ def render_stock_page(conn, active_subtab):
                 st.rerun()
 
         # =========================================================
-        # REZOLVAREA SCROLL-ULUI: CONTAINER DE ACȚIUNE DEASUPRA TABELULUI
+        # LOGICA NOUĂ: AUTO-OPEN LA CLICK PE RÂND
         # =========================================================
-        action_container = st.empty() # Rezervăm spațiu DEASUPRA tabelului
-        
         df_w = pd.read_sql_query("SELECT w.id as ID, w.code as \"Code\", w.name as \"Warehouse Name\", w.location_type as Type, COALESCE(c.name, 'Internal') as \"Owner Customer\" FROM warehouses w LEFT JOIN customers c ON w.customer_id = c.id ORDER BY w.name", conn)
         sel_wh = st.dataframe(df_w, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_wh", column_config={"ID": None})
         
         if sel_wh and len(sel_wh.selection.rows) > 0:
             selected_ids = get_selected_ids(df_w, sel_wh.selection.rows)
             if selected_ids:
-                with action_container.container():
-                    st.info("👇 Acțiunile tale sunt gata!")
+                if len(selected_ids) == 1:
+                    curr_id = selected_ids[0]
+                    # Deschidem fereastra AUTOMAT prima dată când e bifat rândul
+                    if st.session_state.get("auto_open_wh_id") != curr_id:
+                        st.session_state["auto_open_wh_id"] = curr_id
+                        edit_warehouse_dialog(curr_id)
+                    else:
+                        # Dacă utilizatorul închide fereastra manual (lasând rândul bifat),
+                        # îi oferim un buton opțional ca să nu rămână blocat.
+                        c_btn_action, _ = st.columns([3, 7])
+                        with c_btn_action:
+                            if st.button("⚙️ Deschide din nou Depozitul Selectat", use_container_width=True):
+                                edit_warehouse_dialog(curr_id)
+                else:
+                    st.session_state["auto_open_wh_id"] = None # S-au selectat mai multe, resetăm memoria
                     c_btn_action, _ = st.columns([3, 7])
                     with c_btn_action:
-                        if len(selected_ids) == 1:
-                            if st.button("⚙️ Gestionează Depozitul Selectat", type="primary", use_container_width=True): 
-                                edit_warehouse_dialog(selected_ids[0])
-                        else:
-                            if st.button("🗑️ Ștergere Multiplă (Bulk Delete)", type="primary", use_container_width=True): 
-                                bulk_delete_warehouses_dialog(selected_ids)
-                    st.write("") # Spațiu de respirație
+                        if st.button("🗑️ Ștergere Multiplă (Bulk Delete)", type="primary", use_container_width=True): 
+                            bulk_delete_warehouses_dialog(selected_ids)
+        else:
+            st.session_state["auto_open_wh_id"] = None # Nimic selectat, resetăm memoria
 
     elif active_subtab == "Units":
         st.markdown("##### Units"); df_u = pd.read_sql_query("SELECT * FROM units", conn); st.dataframe(df_u, hide_index=True)
