@@ -1,12 +1,15 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+
 from db import import_mrpeasy_items
-from dialogs_utils import reset_raw_filters_callback, reset_buy_filters_callback, reset_fg_filters_callback, get_selected_ids, bulk_delete_stock_dialog, bulk_delete_suppliers_dialog, bulk_delete_warehouses_dialog
+from dialogs_utils import (
+    reset_raw_filters_callback, reset_buy_filters_callback, reset_fg_filters_callback,
+    get_selected_ids, bulk_delete_stock_dialog, bulk_delete_suppliers_dialog, bulk_delete_warehouses_dialog
+)
 from dialogs_stock import add_new_item_dialog, edit_item_dialog, add_warehouse_dialog, edit_warehouse_dialog
 from dialogs_partners import add_supplier_dialog, edit_supplier_dialog
 from dialogs_bom import create_finished_product_dialog
-)
 
 def render_stock_page(conn, active_subtab):
     if active_subtab == "Items": active_subtab = "Raw_Materials"
@@ -173,19 +176,15 @@ def render_stock_page(conn, active_subtab):
 
         df_w = pd.read_sql_query("SELECT w.id as ID, w.code as \"Code\", w.name as \"Warehouse Name\", w.location_type as Type, COALESCE(c.name, 'Internal') as \"Owner Customer\" FROM warehouses w LEFT JOIN customers c ON w.customer_id = c.id ORDER BY w.name", conn)
         sel_wh = st.dataframe(df_w, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_wh", column_config={"ID": None})
-        
-        # AICI E LOGICA NOUĂ PENTRU DEPOZITE
         if sel_wh and len(sel_wh.selection.rows) > 0:
             selected_ids = get_selected_ids(df_w, sel_wh.selection.rows)
             if selected_ids:
                 c_btn_action, _ = st.columns([3, 7])
                 with c_btn_action:
                     if len(selected_ids) == 1:
-                        if st.button("⚙️ Gestionează Depozit Selectat", use_container_width=True): 
-                            edit_warehouse_dialog(selected_ids[0])
+                        if st.button("⚙️ Gestionează Depozit Selectat", use_container_width=True): edit_warehouse_dialog(selected_ids[0])
                     else:
-                        if st.button("🗑️ Ștergere Multiplă (Bulk Delete)", use_container_width=True): 
-                            bulk_delete_warehouses_dialog(selected_ids)
+                        if st.button("🗑️ Ștergere Multiplă (Bulk Delete)", use_container_width=True): bulk_delete_warehouses_dialog(selected_ids)
 
     elif active_subtab == "Units":
         st.markdown("##### Units"); df_u = pd.read_sql_query("SELECT * FROM units", conn); st.dataframe(df_u, hide_index=True)
