@@ -47,14 +47,14 @@ if "bom_select_version" not in st.session_state:
     st.session_state["bom_select_version"] = 0
 
 # --- HELPER TO GET OR CREATE SINGLE UNIQUE BOM ID ---
-def get_or_create_product_bom(conn_dialog, target_prod_id, cust_id=None):
-    cursor = conn_dialog.cursor()
+def get_or_create_product_bom(db_conn, target_prod_id, cust_id=None):
+    cursor = db_conn.cursor()
     cursor.execute("SELECT id FROM product_boms WHERE product_item_id = ? ORDER BY id ASC", (target_prod_id,))
     rows = cursor.fetchall()
     
     if not rows:
         cursor.execute("INSERT INTO product_boms (product_item_id, customer_id) VALUES (?, ?)", (target_prod_id, cust_id))
-        conn_dialog.commit()
+        db_conn.commit()
         return cursor.lastrowid
     
     main_bom_id = rows[0][0]
@@ -66,7 +66,7 @@ def get_or_create_product_bom(conn_dialog, target_prod_id, cust_id=None):
         cursor.execute(f"UPDATE bom_materials SET bom_id = ? WHERE bom_id IN ({placeholders})", [main_bom_id] + other_ids)
         cursor.execute(f"UPDATE bom_operations SET bom_id = ? WHERE bom_id IN ({placeholders})", [main_bom_id] + other_ids)
         cursor.execute(f"DELETE FROM product_boms WHERE id IN ({placeholders})", other_ids)
-        conn_dialog.commit()
+        db_conn.commit()
         
     return main_bom_id
 
@@ -774,9 +774,6 @@ def manage_product_bom_dialog(selected_prod_id=None):
         
     prod_dict = {f"{r['uniq_code']} - {r['name']}": r['id'] for _, r in df_prods.iterrows()}
     
-    # ---------------------------------------------------------
-    # REPARARE CRUCIALĂ: Determinarea corectă a produsului selectat
-    # ---------------------------------------------------------
     target_id = selected_prod_id or st.session_state.get("active_bom_dialog_prod_id")
     
     idx_prod = 0
@@ -1055,7 +1052,7 @@ def manage_product_bom_dialog(selected_prod_id=None):
         cursor.execute("UPDATE stock_items SET customer_id=?, purchase_price=?, selling_price=?, specific_weight=? WHERE id=?", (c_id, tot_prod_cost, final_sell_price, calc_weight, target_prod_id))
         conn_dialog.commit()
         st.session_state["keep_bom_dialog_open"] = False
-        st.session_state.pop("active_bom_dialog_prod_id", None)
+        st.session_state["active_bom_dialog_prod_id"] = target_prod_id
         st.success("BOM Recipe & Final Prices successfully saved!")
         st.rerun()
 
