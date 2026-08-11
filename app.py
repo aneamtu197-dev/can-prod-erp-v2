@@ -305,6 +305,70 @@ def bulk_delete_boms_dialog(item_ids):
         cursor.execute(f"DELETE FROM product_boms WHERE id IN ({placeholders})", item_ids)
         conn_dialog.commit(); st.success("Deleted!"); st.rerun()
 
+@st.dialog("⚠️ Confirm Bulk Delete Warehouses")
+def bulk_delete_warehouses_dialog(item_ids):
+    st.error(f"Are you sure you want to delete {len(item_ids)} warehouse(s)? This action cannot be undone.")
+    c1, c2 = st.columns(2)
+    if c1.button("Cancel", use_container_width=True): st.rerun()
+    if c2.button("Yes, Delete All", type="primary", use_container_width=True):
+        conn_dialog = get_db()
+        cursor = conn_dialog.cursor()
+        placeholders = ",".join(["%s"] * len(item_ids))
+        cursor.execute(f"SELECT count(id) FROM stock_items WHERE warehouse_id IN ({placeholders})", item_ids)
+        if cursor.fetchone()[0] > 0:
+            st.error("🚨 Eroare: Unul sau mai multe depozite conțin materiale! Mută materialele înainte de a le șterge.")
+        else:
+            cursor.execute(f"DELETE FROM warehouses WHERE id IN ({placeholders})", item_ids)
+            conn_dialog.commit()
+            st.success("Deleted!")
+            st.rerun()
+
+@st.dialog("➕ Add New Warehouse")
+def add_warehouse_dialog():
+    conn_dialog = get_db()
+    with st.form("add_wh_form"):
+        st.subheader("New Warehouse Details")
+        w_code = st.text_input("Warehouse Code *", placeholder="e.g. WH-001")
+        w_name = st.text_input("Warehouse Name *", placeholder="e.g. Depozit Central")
+        w_loc = st.selectbox("Location Type", ["Internal Warehouse", "Customer Virtual Storage", "External / Third Party"])
+        
+        if st.form_submit_button("💾 Save Warehouse", type="primary", use_container_width=True):
+            if w_code and w_name:
+                cursor = conn_dialog.cursor()
+                cursor.execute("SELECT id FROM warehouses WHERE code = %s", (w_code.strip(),))
+                if cursor.fetchone():
+                    st.warning("⚠️ This code already exists!")
+                else:
+                    cursor.execute("INSERT INTO warehouses (code, name, location_type) VALUES (%s, %s, %s)", (w_code.strip(), w_name.strip(), w_loc))
+                    conn_dialog.commit(); st.success("Saved!"); st.rerun()
+            else:
+                st.warning("Complete missing fields!")
+
+@st.dialog("✏️ Edit / Delete Warehouse")
+def edit_warehouse_dialog(wh_id):
+    conn_dialog = get_db()
+    cursor = conn_dialog.cursor()
+    cursor.execute("SELECT code, name, location_type FROM warehouses WHERE id = %s", (wh_id,))
+    row = cursor.fetchone()
+    if row:
+        with st.form("edit_wh_form"):
+            e_code = st.text_input("Code (Read-Only) *", value=row[0], disabled=True)
+            e_name = st.text_input("Name *", value=row[1])
+            loc_opts = ["Internal Warehouse", "Customer Virtual Storage", "External / Third Party"]
+            e_loc = st.selectbox("Location Type", loc_opts, index=loc_opts.index(row[2]) if row[2] in loc_opts else 0)
+            
+            st.write("")
+            c_save, c_del = st.columns([8, 2])
+            if c_save.form_submit_button("💾 Save", type="primary", use_container_width=True):
+                cursor.execute("UPDATE warehouses SET name=%s, location_type=%s WHERE id=%s", (e_name.strip(), e_loc, wh_id))
+                conn_dialog.commit(); st.success("Updated!"); st.rerun()
+            if c_del.form_submit_button("🗑️ Delete", use_container_width=True):
+                cursor.execute("SELECT count(id) FROM stock_items WHERE warehouse_id = %s", (wh_id,))
+                if cursor.fetchone()[0] > 0:
+                    st.error("🚨 Eroare: Există materiale asociate cu acest depozit! Nu îl poți șterge.")
+                else:
+                    cursor.execute("DELETE FROM warehouses WHERE id = %s", (wh_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
+
 # HELPER TO SAFE EXTRACT IDS
 def get_selected_ids(df, selected_rows):
     valid_ids = []
@@ -1311,8 +1375,13 @@ elif active_page == "Stock":
             with st.popover("↑ Import CSV", use_container_width=True):
                 csv_file = st.file_uploader("Upload CSV", type=['csv'])
                 if csv_file and st.button("Execute Import"):
-                    ins, upd = import_mrpeasy_items(pd.read_csv(csv_file))
-                    st.success(f"Added: {ins}, Updated: {upd}"); st.rerun()
+                    try:
+                        df_upload = pd.read_csv(csv_file, sep=None, engine='python')
+                        ins, upd = import_mrpeasy_items(df_upload)
+                        st.success(f"Added: {ins}, Updated: {upd}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Eroare la citirea CSV: {e}")
 
         st.markdown('<div class="filter-panel">', unsafe_allow_html=True)
         col_f1, col_f2, col_f3, col_f4, col_f5, col_f6 = st.columns([2, 3, 2, 2, 1.5, 1.5])
@@ -1468,25 +1537,25 @@ elif active_page == "Stock":
                     if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_suppliers_dialog(selected_ids)
 
     elif active_subtab == "Warehouses":
-        c_head, c_btn = st.columns([7, 3])
+        c_head, c_btn1, c_btn2 = st.columns([5, 2, 3])
         with c_head: 
             st.markdown("##### Warehouses & Customer Virtual Storage")
-        with c_btn:
-            if st.button("🔄 Auto-Generare Depozite Virtuale (Clienți)", type="primary", use_container_width=True):
+        with c_btn1:
+            if st.button("➕ Add Warehouse", type="primary", use_container_width=True): add_warehouse_dialog()
+        with c_btn2:
+            if st.button("🔄 Auto-Generare (Clienți)", type="primary", use_container_width=True):
                 cursor_w = conn.cursor()
-                # Luăm toți clienții
                 cursor_w.execute("SELECT id, name FROM customers")
                 all_customers = cursor_w.fetchall()
                 
                 created_count = 0
                 for c_id, c_name in all_customers:
                     v_name = f"v_{c_name}"
-                    v_code = f"WH-CUST-{c_id:04d}"
+                    unique_timestamp = int(datetime.now().timestamp() * 1000)
+                    v_code = f"WH-V-{c_id}-{unique_timestamp}" 
                     
-                    # Verificăm dacă are deja depozit asociat
                     cursor_w.execute("SELECT id FROM warehouses WHERE customer_id = %s OR name = %s", (c_id, v_name))
                     if not cursor_w.fetchone():
-                        # Creăm depozitul virtual legat de ID-ul clientului
                         cursor_w.execute(
                             "INSERT INTO warehouses (code, name, location_type, customer_id) VALUES (%s, %s, 'Customer Virtual Storage', %s)", 
                             (v_code, v_name, c_id)
@@ -1495,14 +1564,24 @@ elif active_page == "Stock":
                         
                 conn.commit()
                 if created_count > 0:
-                    st.success(f"🎉 S-au creat cu succes {created_count} depozite virtuale noi!")
+                    st.success(f"🎉 S-au creat {created_count} depozite virtuale noi!")
                 else:
                     st.info("Toți clienții au deja depozite virtuale alocate.")
                 st.rerun()
 
-        df_w = pd.read_sql_query("SELECT w.id as ID, w.name as \"Warehouse Name\", w.location_type as Type, COALESCE(c.name, 'Internal') as \"Owner Customer\" FROM warehouses w LEFT JOIN customers c ON w.customer_id = c.id ORDER BY w.name", conn)
-        st.dataframe(df_w, use_container_width=True, hide_index=True)
+        df_w = pd.read_sql_query("SELECT w.id as ID, w.code as \"Code\", w.name as \"Warehouse Name\", w.location_type as Type, COALESCE(c.name, 'Internal') as \"Owner Customer\" FROM warehouses w LEFT JOIN customers c ON w.customer_id = c.id ORDER BY w.name", conn)
+        sel_wh = st.dataframe(df_w, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_wh", column_config={"ID": None})
         
+        if sel_wh and len(sel_wh.selection.rows) > 0:
+            selected_ids = get_selected_ids(df_w, sel_wh.selection.rows)
+            if selected_ids:
+                col_a1, col_a2, _ = st.columns([2, 2, 8])
+                with col_a1:
+                    if len(selected_ids) == 1:
+                        if st.button("✏️ Edit Selected", use_container_width=True): edit_warehouse_dialog(selected_ids[0])
+                with col_a2:
+                    if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_warehouses_dialog(selected_ids)
+
     elif active_subtab == "Units":
         st.markdown("##### Units"); df_u = pd.read_sql_query("SELECT * FROM units", conn); st.dataframe(df_u, hide_index=True)
 
@@ -1728,8 +1807,13 @@ elif active_page == "RFQ":
             with st.popover("↑ Import CSV", use_container_width=True):
                 csv_file = st.file_uploader("Upload Customers CSV", type=['csv'], key="upload_cust_csv")
                 if csv_file and st.button("Execute Import", key="exec_cust_imp"):
-                    ins, upd = import_mrpeasy_customers(pd.read_csv(csv_file))
-                    st.success(f"Added: {ins}, Updated: {upd}"); st.rerun()
+                    try:
+                        df_upload = pd.read_csv(csv_file, sep=None, engine='python')
+                        ins, upd = import_mrpeasy_customers(df_upload)
+                        st.success(f"Added: {ins}, Updated: {upd}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Eroare la citirea CSV: {e}")
             
         st.write("")
         df_c = pd.read_sql_query("SELECT id as ID, code as Code, cui as \"CUI\", name as \"Customer Name\", reg_com as \"Reg. Com.\", contact_person as \"Contact Person\", phone as Phone, email as Email FROM customers ORDER BY name", conn)
