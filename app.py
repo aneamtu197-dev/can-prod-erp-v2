@@ -390,7 +390,7 @@ def edit_item_dialog(item_id):
                 st.text_input("Uniq Code (Read-Only) *", value=row[0], disabled=True)
                 e_code = st.text_input("Part No. / Original Code *", value=row[1])
                 e_name = st.text_input("Part Description / Name *", value=row[2])
-                e_sub = st.selectbox("Sub-Group *", ["Tabla", "Teava", "Europrofile", "Raw Materials Diverse"]) if row[3] == "RAW MATERIAL" else row[4]
+                e_sub = st.selectbox("Sub-Group *", ["Tabla", "Teava", "Europrofile", "Raw Materials Diverse"]) if str(row[3]).upper() in ["RAW MATERIAL", "MATERIE PRIMA"] else row[4]
                 
                 df_u_opts = pd.read_sql_query("SELECT id, code, name FROM units ORDER BY code", conn_dialog)
                 u_dict = {f"{r['code']} ({r['name']})": r['id'] for _, r in df_u_opts.iterrows()}; u_keys = list(u_dict.keys())
@@ -405,7 +405,7 @@ def edit_item_dialog(item_id):
                 df_c_opts = pd.read_sql_query("SELECT id, name FROM customers ORDER BY name", conn_dialog)
                 c_dict = {r['name']: r['id'] for _, r in df_c_opts.iterrows()}; c_keys = ["General / Stock Product"] + list(c_dict.keys())
                 c_curr = [k for k, v in c_dict.items() if v == row[14]]
-                selected_c = st.selectbox("Assigned Customer", c_keys, index=c_keys.index(c_curr[0]) if c_curr else 0) if row[3] in ["FINISHED GOOD", "SUBASSEMBLY"] else "General / Stock Product"
+                selected_c = st.selectbox("Assigned Customer", c_keys, index=c_keys.index(c_curr[0]) if c_curr else 0) if str(row[3]).upper() in ["FINISHED GOOD", "SUBASSEMBLY", "PRODUSE FINITE"] else "General / Stock Product"
 
             with col2:
                 e_pprice = st.number_input("Purchase Price (€)", value=safe_float(row[8]))
@@ -763,7 +763,7 @@ def create_finished_product_dialog():
 def manage_product_bom_dialog(selected_prod_id=None):
     st.session_state["keep_bom_dialog_open"] = False
     
-    df_prods = pd.read_sql_query("SELECT id, uniq_code, code, name, customer_id FROM stock_items WHERE category IN ('FINISHED GOOD', 'SUBASSEMBLY', 'PRODUSE FINITE') ORDER BY name", conn)
+    df_prods = pd.read_sql_query("SELECT id, uniq_code, code, name, customer_id FROM stock_items WHERE UPPER(category) IN ('FINISHED GOOD', 'SUBASSEMBLY', 'PRODUSE FINITE') ORDER BY name", conn)
     if len(df_prods) == 0:
         st.warning("Please add Finished Goods in Stock before creating BOM Recipes!")
         st.session_state.pop("active_bom_dialog_prod_id", None)
@@ -1312,12 +1312,12 @@ elif active_page == "Stock":
         f_raw_code = col_f1.text_input("Part No. / Uniq Code", key="f_raw_code")
         f_raw_name = col_f2.text_input("Part Description", key="f_raw_name")
         f_raw_sub = col_f3.selectbox("Sub-Group", ["All Sub-Groups", "Tabla", "Teava", "Europrofile", "Raw Materials Diverse"], key="f_raw_sub")
-        f_raw_supp = col_f4.selectbox("Supplier", ["All Suppliers"] + [r[0] for r in conn.cursor().execute("SELECT DISTINCT s.name FROM stock_items si JOIN suppliers s ON si.supplier_id=s.id WHERE si.category='RAW MATERIAL'").fetchall()], key="f_raw_supp")
-        f_raw_uom = col_f5.selectbox("UoM", ["All UoMs"] + [r[0] for r in conn.cursor().execute("SELECT DISTINCT u.code FROM stock_items si JOIN units u ON si.unit_id=u.id WHERE si.category='RAW MATERIAL'").fetchall()], key="f_raw_uom")
+        f_raw_supp = col_f4.selectbox("Supplier", ["All Suppliers"] + [r[0] for r in conn.cursor().execute("SELECT DISTINCT s.name FROM stock_items si JOIN suppliers s ON si.supplier_id=s.id WHERE UPPER(si.category) IN ('RAW MATERIAL', 'MATERIE PRIMA')").fetchall()], key="f_raw_supp")
+        f_raw_uom = col_f5.selectbox("UoM", ["All UoMs"] + [r[0] for r in conn.cursor().execute("SELECT DISTINCT u.code FROM stock_items si JOIN units u ON si.unit_id=u.id WHERE UPPER(si.category) IN ('RAW MATERIAL', 'MATERIE PRIMA')").fetchall()], key="f_raw_uom")
         col_f6.write(""); col_f6.write(""); col_f6.button("🔄 Reset Filters", use_container_width=True, on_click=reset_raw_filters_callback)
         st.markdown('</div>', unsafe_allow_html=True)
 
-        q_raw = "SELECT si.id as ID, si.uniq_code as 'Uniq Code', si.code as 'Part No.', si.name as 'Description', si.sub_group as 'Sub-Group', s.name as 'Supplier', u.code as 'UoM', si.specific_weight as 'Spec. Weight', si.purchase_price as 'Purchase Price (€)' FROM stock_items si LEFT JOIN suppliers s ON si.supplier_id = s.id LEFT JOIN units u ON si.unit_id = u.id WHERE si.category = 'RAW MATERIAL'"
+        q_raw = "SELECT si.id as ID, si.uniq_code as 'Uniq Code', si.code as 'Part No.', si.name as 'Description', si.sub_group as 'Sub-Group', s.name as 'Supplier', u.code as 'UoM', si.specific_weight as 'Spec. Weight', si.purchase_price as 'Purchase Price (€)' FROM stock_items si LEFT JOIN suppliers s ON si.supplier_id = s.id LEFT JOIN units u ON si.unit_id = u.id WHERE UPPER(si.category) IN ('RAW MATERIAL', 'MATERIE PRIMA', 'RAW MATERIALS')"
         params = []
         if f_raw_code: q_raw += " AND (si.code LIKE ? OR si.uniq_code LIKE ?)"; params.extend([f"%{f_raw_code}%", f"%{f_raw_code}%"])
         if f_raw_name: q_raw += " AND si.name LIKE ?"; params.append(f"%{f_raw_name}%")
@@ -1348,11 +1348,11 @@ elif active_page == "Stock":
         col_b1, col_b2, col_b3, col_b4 = st.columns([3, 4, 3, 2])
         f_buy_code = col_b1.text_input("Part No.", key="f_buy_code")
         f_buy_name = col_b2.text_input("Description", key="f_buy_name")
-        f_buy_supp = col_b3.selectbox("Supplier", ["All Suppliers"] + [r[0] for r in conn.cursor().execute("SELECT DISTINCT s.name FROM stock_items si JOIN suppliers s ON si.supplier_id=s.id WHERE si.category='BUY PART'").fetchall()], key="f_buy_supp")
+        f_buy_supp = col_b3.selectbox("Supplier", ["All Suppliers"] + [r[0] for r in conn.cursor().execute("SELECT DISTINCT s.name FROM stock_items si JOIN suppliers s ON si.supplier_id=s.id WHERE UPPER(si.category) IN ('BUY PART', 'BUY PARTS')").fetchall()], key="f_buy_supp")
         col_b4.write(""); col_b4.write(""); col_b4.button("🔄 Reset", use_container_width=True, on_click=reset_buy_filters_callback)
         st.markdown('</div>', unsafe_allow_html=True)
 
-        q_buy = "SELECT si.id as ID, si.uniq_code as 'Uniq Code', si.code as 'Part No.', si.name as 'Description', s.name as 'Supplier', u.code as 'UoM', si.purchase_price as 'Purchase Price (€)' FROM stock_items si LEFT JOIN suppliers s ON si.supplier_id = s.id LEFT JOIN units u ON si.unit_id = u.id WHERE si.category = 'BUY PART'"
+        q_buy = "SELECT si.id as ID, si.uniq_code as 'Uniq Code', si.code as 'Part No.', si.name as 'Description', s.name as 'Supplier', u.code as 'UoM', si.purchase_price as 'Purchase Price (€)' FROM stock_items si LEFT JOIN suppliers s ON si.supplier_id = s.id LEFT JOIN units u ON si.unit_id = u.id WHERE UPPER(si.category) IN ('BUY PART', 'BUY PARTS')"
         params = []
         if f_buy_code: q_buy += " AND (si.code LIKE ? OR si.uniq_code LIKE ?)"; params.extend([f"%{f_buy_code}%", f"%{f_buy_code}%"])
         if f_buy_name: q_buy += " AND si.name LIKE ?"; params.append(f"%{f_buy_name}%")
@@ -1405,7 +1405,7 @@ elif active_page == "Stock":
             LEFT JOIN units u ON si.unit_id = u.id 
             LEFT JOIN customers c ON si.customer_id = c.id
             LEFT JOIN warehouses w ON si.warehouse_id = w.id
-            WHERE si.category IN ('FINISHED GOOD', 'SUBASSEMBLY', 'PRODUSE FINITE')
+            WHERE UPPER(si.category) IN ('FINISHED GOOD', 'SUBASSEMBLY', 'PRODUSE FINITE')
         """
         params = []
         if f_fg_code: q_fin += " AND (si.code LIKE ? OR si.uniq_code LIKE ?)"; params.extend([f"%{f_fg_code}%", f"%{f_fg_code}%"])
