@@ -1314,8 +1314,13 @@ elif active_page == "Stock":
         f_raw_code = col_f1.text_input("Part No. / Uniq Code", key="f_raw_code")
         f_raw_name = col_f2.text_input("Part Description", key="f_raw_name")
         f_raw_sub = col_f3.selectbox("Sub-Group", ["All Sub-Groups", "Tabla", "Teava", "Europrofile", "Raw Materials Diverse"], key="f_raw_sub")
-        f_raw_supp = col_f4.selectbox("Supplier", ["All Suppliers"] + [r[0] for r in conn.cursor().execute("SELECT DISTINCT s.name FROM stock_items si JOIN suppliers s ON si.supplier_id=s.id WHERE UPPER(si.category) IN ('RAW MATERIAL', 'MATERIE PRIMA')").fetchall()], key="f_raw_supp")
-        f_raw_uom = col_f5.selectbox("UoM", ["All UoMs"] + [r[0] for r in conn.cursor().execute("SELECT DISTINCT u.code FROM stock_items si JOIN units u ON si.unit_id=u.id WHERE UPPER(si.category) IN ('RAW MATERIAL', 'MATERIE PRIMA')").fetchall()], key="f_raw_uom")
+        
+        df_raw_supp = pd.read_sql_query("SELECT DISTINCT s.name FROM stock_items si JOIN suppliers s ON si.supplier_id=s.id WHERE UPPER(si.category) IN ('RAW MATERIAL', 'MATERIE PRIMA')", conn)
+        f_raw_supp = col_f4.selectbox("Supplier", ["All Suppliers"] + df_raw_supp['name'].tolist(), key="f_raw_supp")
+        
+        df_raw_uom = pd.read_sql_query("SELECT DISTINCT u.code FROM stock_items si JOIN units u ON si.unit_id=u.id WHERE UPPER(si.category) IN ('RAW MATERIAL', 'MATERIE PRIMA')", conn)
+        f_raw_uom = col_f5.selectbox("UoM", ["All UoMs"] + df_raw_uom['code'].tolist(), key="f_raw_uom")
+        
         col_f6.write(""); col_f6.write(""); col_f6.button("🔄 Reset Filters", use_container_width=True, on_click=reset_raw_filters_callback)
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1350,7 +1355,10 @@ elif active_page == "Stock":
         col_b1, col_b2, col_b3, col_b4 = st.columns([3, 4, 3, 2])
         f_buy_code = col_b1.text_input("Part No.", key="f_buy_code")
         f_buy_name = col_b2.text_input("Description", key="f_buy_name")
-        f_buy_supp = col_b3.selectbox("Supplier", ["All Suppliers"] + [r[0] for r in conn.cursor().execute("SELECT DISTINCT s.name FROM stock_items si JOIN suppliers s ON si.supplier_id=s.id WHERE UPPER(si.category) IN ('BUY PART', 'BUY PARTS')").fetchall()], key="f_buy_supp")
+        
+        df_buy_supp = pd.read_sql_query("SELECT DISTINCT s.name FROM stock_items si JOIN suppliers s ON si.supplier_id=s.id WHERE UPPER(si.category) IN ('BUY PART', 'BUY PARTS')", conn)
+        f_buy_supp = col_b3.selectbox("Supplier", ["All Suppliers"] + df_buy_supp['name'].tolist(), key="f_buy_supp")
+        
         col_b4.write(""); col_b4.write(""); col_b4.button("🔄 Reset", use_container_width=True, on_click=reset_buy_filters_callback)
         st.markdown('</div>', unsafe_allow_html=True)
 
