@@ -36,6 +36,7 @@ def reset_fg_filters_callback():
 def reset_bom_filters_callback():
     for k in ["f_bom_code", "f_bom_name", "f_bom_cust"]: st.session_state[k] = "All Customers" if "cust" in k else ""
 
+# FUNCTIA REPARATĂ: Acum detectează automat ID sau id
 def get_selected_ids(df, selected_rows):
     valid_ids = []
     if selected_rows:
