@@ -7,21 +7,8 @@ import math
 # 1. DATABASE CONNECTION
 # ==========================================
 def get_db():
-    return psycopg2.connect(
-        host=st.secrets["postgres"]["host"],
-        database=st.secrets["postgres"]["database"],
-        user=st.secrets["postgres"]["user"],
-        password=st.secrets["postgres"]["password"],
-        port=st.secrets["postgres"].get("port", 5432)
-    )
-
-def safe_float(val):
-    if val is None or pd.isna(val):
-        return 0.0
-    try:
-        return float(val)
-    except:
-        return 0.0
+    DATABASE_URL = "postgresql://postgres:gWJ8uOkdgotCKmC7@db.ptdkpxkftfnmtigzpttj.supabase.co:5432/postgres"
+    return psycopg2.connect(DATABASE_URL)
 
 # ==========================================
 # 2. GENERATE UNIQUE CODES
