@@ -4,11 +4,10 @@ import psycopg2
 import re
 
 def get_db():
-    """Returnează o conexiune directă psycopg2 securizată cu Supabase."""
+    """Returnează o conexiune directă psycopg2 securizată cu Supabase Pooler."""
     try:
         url = st.secrets["postgres"]["url"]
         
-        # Ajustare format URL pentru psycopg2
         if url.startswith("postgresql+psycopg2://"):
             url = url.replace("postgresql+psycopg2://", "postgresql://", 1)
         elif url.startswith("postgres://"):
@@ -18,7 +17,7 @@ def get_db():
             separator = "&" if "?" in url else "?"
             url = f"{url}{separator}sslmode=require"
 
-        conn = psycopg2.connect(url)
+        conn = psycopg2.connect(url, connect_timeout=15)
         return conn
     except Exception as e:
         st.error(f"🚨 Eroare la conexiunea cu baza de date Supabase: {e}")
