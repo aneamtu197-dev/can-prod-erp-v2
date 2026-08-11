@@ -1,3 +1,12 @@
+Eroarea apare dintr-o diferență tehnică mică, dar importantă, între SQLite și PostgreSQL (psycopg2).
+
+În SQLite, comanda `cursor.execute(...)` returnează cursorul în sine, ceea ce îți permite să scrii direct `.fetchall()` la finalul ei. În PostgreSQL (folosind driver-ul `psycopg2`), `.execute(...)` returnează `None`. Așadar, când codul încearcă să facă `None.fetchall()`, aplicația se oprește cu `AttributeError`.
+
+Am rezolvat această problemă înlocuind interogările inline de la filtrele de pe coloane cu funcția stabilă `pd.read_sql_query`, pe care o folosim deja cu succes în restul paginii.
+
+Iată codul complet și corectat pentru **`app.py`**. Înlocuiește tot conținutul pe GitHub:
+
+```python
 import streamlit as st
 import pandas as pd
 import requests
@@ -1717,3 +1726,5 @@ elif active_page == "RFQ":
         st.info("Sales Orders functionality will be added here.")
 
 conn.close()
+
+```
