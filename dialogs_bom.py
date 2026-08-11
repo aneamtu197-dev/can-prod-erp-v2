@@ -82,9 +82,13 @@ def create_finished_product_dialog():
             if sp_w: calc_weight += float(qty * sp_w)
             
     if st.button("💾 Save Item & Build Recipe", type="primary", use_container_width=True):
-        if part_desc.strip():
+        sel_wh_cur = st.session_state["p_wh_sel"]
+        
+        # APLICARE REGULA PENTRU CREARE
+        if sel_wh_cur.strip().lower() == "finish product" and selected_copy == "None (Start from Scratch)":
+            st.error("🚨 Regula de Business: Un produs nou (creat de la zero) nu are Rețetă (BOM) și Routing. Alegeți un depozit temporar (ex: Virtual Storage) până când definiți rețeta completă!")
+        elif part_desc.strip():
             sel_cust_cur = st.session_state["p_cust_sel"]
-            sel_wh_cur = st.session_state["p_wh_sel"]
             cust_id_val = cust_dict.get(sel_cust_cur) if sel_cust_cur != "General / Stock Product" else None
             cursor.execute("INSERT INTO stock_items (uniq_code, code, name, category, sub_group, customer_id, unit_id, warehouse_id, selling_price, specific_weight, weight_unit, barcode) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'kg', %s) RETURNING id", (auto_part_no, auto_part_no, part_desc.strip(), prod_group, "Finished Goods", cust_id_val, u_dict[sel_uom], wh_dict[sel_wh_cur], selling_p, calc_weight, auto_barcode))
             new_prod_id = cursor.fetchone()[0]
