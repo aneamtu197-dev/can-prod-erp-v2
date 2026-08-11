@@ -1467,9 +1467,40 @@ elif active_page == "Stock":
                 with col_a2:
                     if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_suppliers_dialog(selected_ids)
 
-    elif active_subtab == "Warehouses":
-        st.markdown("##### Warehouses & Customer Virtual Storage")
-        df_w = pd.read_sql_query("SELECT w.id as ID, w.name as \"Warehouse Name\", w.location_type as Type, COALESCE(c.name, 'Internal') as \"Owner Customer\" FROM warehouses w LEFT JOIN customers c ON w.customer_id = c.id", conn)
+  elif active_subtab == "Warehouses":
+        c_head, c_btn = st.columns([7, 3])
+        with c_head: 
+            st.markdown("##### Warehouses & Customer Virtual Storage")
+        with c_btn:
+            if st.button("🔄 Auto-Generare Depozite Virtuale (Clienți)", type="primary", use_container_width=True):
+                cursor_w = conn.cursor()
+                # Luăm toți clienții
+                cursor_w.execute("SELECT id, name FROM customers")
+                all_customers = cursor_w.fetchall()
+                
+                created_count = 0
+                for c_id, c_name in all_customers:
+                    v_name = f"v_{c_name}"
+                    v_code = f"WH-CUST-{c_id:04d}"
+                    
+                    # Verificăm dacă are deja depozit asociat
+                    cursor_w.execute("SELECT id FROM warehouses WHERE customer_id = %s OR name = %s", (c_id, v_name))
+                    if not cursor_w.fetchone():
+                        # Creăm depozitul virtual legat de ID-ul clientului
+                        cursor_w.execute(
+                            "INSERT INTO warehouses (code, name, location_type, customer_id) VALUES (%s, %s, 'Customer Virtual Storage', %s)", 
+                            (v_code, v_name, c_id)
+                        )
+                        created_count += 1
+                        
+                conn.commit()
+                if created_count > 0:
+                    st.success(f"🎉 S-au creat cu succes {created_count} depozite virtuale noi!")
+                else:
+                    st.info("Toți clienții au deja depozite virtuale alocate.")
+                st.rerun()
+
+        df_w = pd.read_sql_query("SELECT w.id as ID, w.name as \"Warehouse Name\", w.location_type as Type, COALESCE(c.name, 'Internal') as \"Owner Customer\" FROM warehouses w LEFT JOIN customers c ON w.customer_id = c.id ORDER BY w.name", conn)
         st.dataframe(df_w, use_container_width=True, hide_index=True)
         
     elif active_subtab == "Units":
