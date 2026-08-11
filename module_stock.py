@@ -157,26 +157,30 @@ def render_stock_page(conn, active_subtab):
         with c_btn1:
             if st.button("➕ Add Warehouse", type="primary", use_container_width=True): add_warehouse_dialog()
         with c_btn2:
-            if st.button("🔄 Auto-Generare (Clienți)", type="primary", use_container_width=True):
+            if st.button("🔄 Auto-Generare (Sincronizare Nume)", type="primary", use_container_width=True):
                 cursor_w = conn.cursor()
+                
+                # 1. Sincronizăm depozitele existente eliminând v_ și punând exact numele clientului
+                cursor_w.execute("UPDATE warehouses SET name = (SELECT name FROM customers WHERE customers.id = warehouses.customer_id) WHERE location_type = 'Customer Virtual Storage' AND customer_id IS NOT NULL")
+                
+                # 2. Creăm depozitele lipsă
                 cursor_w.execute("SELECT id, name FROM customers")
                 created_count = 0
                 for c_id, c_name in cursor_w.fetchall():
-                    v_name = f"v_{c_name}"
-                    unique_timestamp = int(datetime.now().timestamp() * 1000)
-                    v_code = f"WH-V-{c_id}-{unique_timestamp}" 
-                    cursor_w.execute("SELECT id FROM warehouses WHERE customer_id = %s OR name = %s", (c_id, v_name))
+                    cursor_w.execute("SELECT id FROM warehouses WHERE customer_id = %s OR name = %s", (c_id, c_name))
                     if not cursor_w.fetchone():
-                        cursor_w.execute("INSERT INTO warehouses (code, name, location_type, customer_id) VALUES (%s, %s, 'Customer Virtual Storage', %s)", (v_code, v_name, c_id))
+                        unique_timestamp = int(datetime.now().timestamp() * 1000)
+                        v_code = f"WH-V-{c_id}-{unique_timestamp}" 
+                        cursor_w.execute("INSERT INTO warehouses (code, name, location_type, customer_id) VALUES (%s, %s, 'Customer Virtual Storage', %s)", (v_code, c_name, c_id))
                         created_count += 1
                 conn.commit()
-                if created_count > 0: st.success(f"🎉 S-au creat {created_count} depozite virtuale noi!")
-                else: st.info("Toți clienții au deja depozite virtuale alocate.")
+                if created_count > 0: 
+                    st.success(f"🎉 S-au creat {created_count} depozite lipsă. Toate numele au fost sincronizate!")
+                else: 
+                    st.success("✅ Toate depozitele clienților sunt la zi și numele au fost sincronizate perfect!")
                 st.rerun()
 
-        # =========================================================
-        # LOGICA NOUĂ: AUTO-OPEN LA CLICK PE RÂND
-        # =========================================================
+        # LOGICA DE AUTO-OPEN LA CLICK PE RÂND
         df_w = pd.read_sql_query("SELECT w.id as ID, w.code as \"Code\", w.name as \"Warehouse Name\", w.location_type as Type, COALESCE(c.name, 'Internal') as \"Owner Customer\" FROM warehouses w LEFT JOIN customers c ON w.customer_id = c.id ORDER BY w.name", conn)
         sel_wh = st.dataframe(df_w, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_wh", column_config={"ID": None})
         
@@ -185,25 +189,22 @@ def render_stock_page(conn, active_subtab):
             if selected_ids:
                 if len(selected_ids) == 1:
                     curr_id = selected_ids[0]
-                    # Deschidem fereastra AUTOMAT prima dată când e bifat rândul
                     if st.session_state.get("auto_open_wh_id") != curr_id:
                         st.session_state["auto_open_wh_id"] = curr_id
                         edit_warehouse_dialog(curr_id)
                     else:
-                        # Dacă utilizatorul închide fereastra manual (lasând rândul bifat),
-                        # îi oferim un buton opțional ca să nu rămână blocat.
                         c_btn_action, _ = st.columns([3, 7])
                         with c_btn_action:
                             if st.button("⚙️ Deschide din nou Depozitul Selectat", use_container_width=True):
                                 edit_warehouse_dialog(curr_id)
                 else:
-                    st.session_state["auto_open_wh_id"] = None # S-au selectat mai multe, resetăm memoria
+                    st.session_state["auto_open_wh_id"] = None
                     c_btn_action, _ = st.columns([3, 7])
                     with c_btn_action:
                         if st.button("🗑️ Ștergere Multiplă (Bulk Delete)", type="primary", use_container_width=True): 
                             bulk_delete_warehouses_dialog(selected_ids)
         else:
-            st.session_state["auto_open_wh_id"] = None # Nimic selectat, resetăm memoria
+            st.session_state["auto_open_wh_id"] = None
 
     elif active_subtab == "Units":
         st.markdown("##### Units"); df_u = pd.read_sql_query("SELECT * FROM units", conn); st.dataframe(df_u, hide_index=True)
