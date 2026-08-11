@@ -4,27 +4,38 @@ import psycopg2
 from sqlalchemy import create_engine, text
 import re
 
-def get_db_engine():
-    """Returnează un engine SQLAlchemy conectat la Supabase PostgreSQL."""
+def get_db_url():
+    """Obține URL-ul din Secrets și asigură configurarea SSL."""
     try:
-        db_url = st.secrets["postgres"]["url"]
-        return create_engine(db_url)
-    except Exception as e:
-        st.error("🚨 Eroare de conexiune la baza de date Supabase. Verifică 'Secrets' în Streamlit Cloud!")
+        url = st.secrets["postgres"]["url"]
+        if "sslmode" not in url:
+            separator = "&" if "?" in url else "?"
+            url = f"{url}{separator}sslmode=require"
+        return url
+    except Exception:
+        st.error("🚨 Nu s-a găsit cheia 'url' în Streamlit Cloud Secrets! Verifică secțiunea Secrets.")
         st.stop()
 
+def get_db_engine():
+    """Returnează un engine SQLAlchemy configurat pentru PostgreSQL."""
+    url = get_db_url()
+    return create_engine(
+        url, 
+        pool_pre_ping=True
+    )
+
 def get_db():
-    """Returnează o conexiune directă psycopg2 pentru compatibilitate."""
+    """Returnează o conexiune directă psycopg2."""
     try:
-        db_url = st.secrets["postgres"]["url"]
-        conn = psycopg2.connect(db_url)
+        url = get_db_url()
+        conn = psycopg2.connect(url)
         return conn
     except Exception as e:
-        st.error("🚨 Nu s-a putut stabili conexiunea directă cu Supabase PostgreSQL.")
+        st.error(f"🚨 Eroare la conexiunea Supabase: {e}")
         st.stop()
 
 def init_custom_db():
-    """Creează tabelele și secvențele în Supabase PostgreSQL la prima inițializare."""
+    """Creează structura de tabele în Supabase PostgreSQL la prima rulare."""
     engine = get_db_engine()
     with engine.begin() as conn:
         # --- SUPPLIERS TABLE ---
