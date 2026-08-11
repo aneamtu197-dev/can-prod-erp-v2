@@ -1,221 +1,201 @@
 import streamlit as st
 import pandas as pd
 import psycopg2
-from sqlalchemy import create_engine, text
 import re
 
-def get_db_url():
-    """Obține URL-ul din Secrets și asigură configurarea SSL."""
+def get_db():
+    """Returnează o conexiune directă psycopg2 securizată cu Supabase."""
     try:
         url = st.secrets["postgres"]["url"]
+        
+        # Ajustare format URL pentru psycopg2
+        if url.startswith("postgresql+psycopg2://"):
+            url = url.replace("postgresql+psycopg2://", "postgresql://", 1)
+        elif url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql://", 1)
+            
         if "sslmode" not in url:
             separator = "&" if "?" in url else "?"
             url = f"{url}{separator}sslmode=require"
-        return url
-    except Exception:
-        st.error("🚨 Nu s-a găsit cheia 'url' în Streamlit Cloud Secrets! Verifică secțiunea Secrets.")
-        st.stop()
 
-def get_db_engine():
-    """Returnează un engine SQLAlchemy configurat pentru PostgreSQL."""
-    url = get_db_url()
-    return create_engine(
-        url, 
-        pool_pre_ping=True
-    )
-
-def get_db():
-    """Returnează o conexiune directă psycopg2."""
-    try:
-        url = get_db_url()
         conn = psycopg2.connect(url)
         return conn
     except Exception as e:
-        st.error(f"🚨 Eroare la conexiunea Supabase: {e}")
+        st.error(f"🚨 Eroare la conexiunea cu baza de date Supabase: {e}")
         st.stop()
 
 def init_custom_db():
-    """Creează structura de tabele în Supabase PostgreSQL la prima rulare."""
-    engine = get_db_engine()
-    with engine.begin() as conn:
-        # --- SUPPLIERS TABLE ---
-        conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS suppliers (
-            id SERIAL PRIMARY KEY,
-            code VARCHAR(50) UNIQUE NOT NULL,
-            name VARCHAR(255) NOT NULL,
-            supplier_type VARCHAR(100) DEFAULT 'Raw Material Supplier',
-            cui VARCHAR(50),
-            reg_com VARCHAR(50),
-            address TEXT,
-            iban VARCHAR(100),
-            bank_name VARCHAR(100),
-            contact_person VARCHAR(255),
-            phone VARCHAR(100),
-            email VARCHAR(255),
-            lead_time_days INTEGER DEFAULT 0
-        );
-        """))
+    """Creează structura de tabele în Supabase PostgreSQL nativ."""
+    conn = get_db()
+    cursor = conn.cursor()
 
-        # --- CUSTOMERS TABLE ---
-        conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS customers (
-            id SERIAL PRIMARY KEY,
-            code VARCHAR(50) UNIQUE NOT NULL,
-            name VARCHAR(255) NOT NULL,
-            cui VARCHAR(50),
-            reg_com VARCHAR(50),
-            address TEXT,
-            iban VARCHAR(100),
-            bank_name VARCHAR(100),
-            contact_person VARCHAR(255),
-            phone VARCHAR(100),
-            email VARCHAR(255)
-        );
-        """))
+    # --- SUPPLIERS TABLE ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS suppliers (
+        id SERIAL PRIMARY KEY,
+        code VARCHAR(50) UNIQUE NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        supplier_type VARCHAR(100) DEFAULT 'Raw Material Supplier',
+        cui VARCHAR(50),
+        reg_com VARCHAR(50),
+        address TEXT,
+        iban VARCHAR(100),
+        bank_name VARCHAR(100),
+        contact_person VARCHAR(255),
+        phone VARCHAR(100),
+        email VARCHAR(255),
+        lead_time_days INTEGER DEFAULT 0
+    );
+    """)
 
-        # --- PRODUCTION FACILITIES ---
-        conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS production_facilities (
-            id SERIAL PRIMARY KEY,
-            code VARCHAR(50) UNIQUE NOT NULL,
-            name VARCHAR(255) NOT NULL,
-            facility_type VARCHAR(100) DEFAULT 'Machine',
-            brand_model VARCHAR(255),
-            status VARCHAR(50) DEFAULT 'Operational',
-            next_maintenance_date VARCHAR(50)
-        );
-        """))
+    # --- CUSTOMERS TABLE ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS customers (
+        id SERIAL PRIMARY KEY,
+        code VARCHAR(50) UNIQUE NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        cui VARCHAR(50),
+        reg_com VARCHAR(50),
+        address TEXT,
+        iban VARCHAR(100),
+        bank_name VARCHAR(100),
+        contact_person VARCHAR(255),
+        phone VARCHAR(100),
+        email VARCHAR(255)
+    );
+    """)
 
-        # --- OPERATIONS TABLE ---
-        conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS operations (
-            id SERIAL PRIMARY KEY,
-            uniq_code VARCHAR(50) UNIQUE NOT NULL,
-            name VARCHAR(255) NOT NULL,
-            cost_unit VARCHAR(20) DEFAULT 'Hour',
-            rate_per_unit REAL DEFAULT 0.0,
-            productivity_level REAL DEFAULT 1.0,
-            hours_per_operator REAL DEFAULT 8.0,
-            max_hours_day REAL DEFAULT 8.0,
-            max_hours_week REAL DEFAULT 40.0,
-            max_hours_month REAL DEFAULT 160.0,
-            operators_count INTEGER DEFAULT 1,
-            facility_id INTEGER REFERENCES production_facilities(id) ON DELETE SET NULL,
-            is_outsourced INTEGER DEFAULT 0,
-            preferred_supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL,
-            outsourcing_type VARCHAR(100),
-            material_supplied_by VARCHAR(50) DEFAULT 'CAN PROD'
-        );
-        """))
+    # --- PRODUCTION FACILITIES ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS production_facilities (
+        id SERIAL PRIMARY KEY,
+        code VARCHAR(50) UNIQUE NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        facility_type VARCHAR(100) DEFAULT 'Machine',
+        brand_model VARCHAR(255),
+        status VARCHAR(50) DEFAULT 'Operational',
+        next_maintenance_date VARCHAR(50)
+    );
+    """)
 
-        # --- UNITS TABLE ---
-        conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS units (
-            id SERIAL PRIMARY KEY,
-            code VARCHAR(20) UNIQUE NOT NULL,
-            name VARCHAR(100) NOT NULL
-        );
-        """))
+    # --- OPERATIONS TABLE ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS operations (
+        id SERIAL PRIMARY KEY,
+        uniq_code VARCHAR(50) UNIQUE NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        cost_unit VARCHAR(20) DEFAULT 'Hour',
+        rate_per_unit REAL DEFAULT 0.0,
+        productivity_level REAL DEFAULT 1.0,
+        hours_per_operator REAL DEFAULT 8.0,
+        max_hours_day REAL DEFAULT 8.0,
+        max_hours_week REAL DEFAULT 40.0,
+        max_hours_month REAL DEFAULT 160.0,
+        operators_count INTEGER DEFAULT 1,
+        facility_id INTEGER REFERENCES production_facilities(id) ON DELETE SET NULL,
+        is_outsourced INTEGER DEFAULT 0,
+        preferred_supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL,
+        outsourcing_type VARCHAR(100),
+        material_supplied_by VARCHAR(50) DEFAULT 'CAN PROD'
+    );
+    """)
 
-        # --- WAREHOUSES TABLE ---
-        conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS warehouses (
-            id SERIAL PRIMARY KEY,
-            code VARCHAR(50) UNIQUE NOT NULL,
-            name VARCHAR(255) NOT NULL,
-            location_type VARCHAR(100) DEFAULT 'Internal Warehouse',
-            customer_id INTEGER REFERENCES customers(id) ON DELETE CASCADE
-        );
-        """))
+    # --- UNITS TABLE ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS units (
+        id SERIAL PRIMARY KEY,
+        code VARCHAR(20) UNIQUE NOT NULL,
+        name VARCHAR(100) NOT NULL
+    );
+    """)
 
-        # --- STOCK ITEMS TABLE ---
-        conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS stock_items (
-            id SERIAL PRIMARY KEY,
-            uniq_code VARCHAR(100),
-            code VARCHAR(100) NOT NULL,
-            name VARCHAR(255) NOT NULL,
-            category VARCHAR(50) DEFAULT 'RAW MATERIAL',
-            sub_group VARCHAR(100) DEFAULT 'General',
-            supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL,
-            unit_id INTEGER NOT NULL REFERENCES units(id),
-            warehouse_id INTEGER NOT NULL REFERENCES warehouses(id),
-            purchase_price REAL DEFAULT 0.0,
-            selling_price REAL DEFAULT 0.0,
-            specific_weight REAL DEFAULT 0.0,
-            weight_unit VARCHAR(20) DEFAULT 'kg',
-            current_stock REAL DEFAULT 0.0,
-            min_stock REAL DEFAULT 0.0,
-            customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
-            barcode VARCHAR(100)
-        );
-        """))
+    # --- WAREHOUSES TABLE ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS warehouses (
+        id SERIAL PRIMARY KEY,
+        code VARCHAR(50) UNIQUE NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        location_type VARCHAR(100) DEFAULT 'Internal Warehouse',
+        customer_id INTEGER REFERENCES customers(id) ON DELETE CASCADE
+    );
+    """)
 
-        # --- PRODUCT BOMS (MASTER RECIPE) ---
-        conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS product_boms (
-            id SERIAL PRIMARY KEY,
-            product_item_id INTEGER UNIQUE NOT NULL REFERENCES stock_items(id) ON DELETE CASCADE,
-            customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
-            total_material_cost REAL DEFAULT 0.0,
-            total_labor_cost REAL DEFAULT 0.0,
-            total_production_cost REAL DEFAULT 0.0,
-            calculated_weight REAL DEFAULT 0.0,
-            markup_percent REAL DEFAULT 0.0
-        );
-        """))
+    # --- STOCK ITEMS TABLE ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS stock_items (
+        id SERIAL PRIMARY KEY,
+        uniq_code VARCHAR(100),
+        code VARCHAR(100) NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        category VARCHAR(50) DEFAULT 'RAW MATERIAL',
+        sub_group VARCHAR(100) DEFAULT 'General',
+        supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL,
+        unit_id INTEGER NOT NULL REFERENCES units(id),
+        warehouse_id INTEGER NOT NULL REFERENCES warehouses(id),
+        purchase_price REAL DEFAULT 0.0,
+        selling_price REAL DEFAULT 0.0,
+        specific_weight REAL DEFAULT 0.0,
+        weight_unit VARCHAR(20) DEFAULT 'kg',
+        current_stock REAL DEFAULT 0.0,
+        min_stock REAL DEFAULT 0.0,
+        customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+        barcode VARCHAR(100)
+    );
+    """)
 
-        # --- BOM MATERIAL COMPONENTS ---
-        conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS bom_materials (
-            id SERIAL PRIMARY KEY,
-            bom_id INTEGER NOT NULL REFERENCES product_boms(id) ON DELETE CASCADE,
-            material_item_id INTEGER NOT NULL REFERENCES stock_items(id),
-            quantity_required REAL DEFAULT 0.0,
-            unit_cost REAL DEFAULT 0.0,
-            total_cost REAL DEFAULT 0.0
-        );
-        """))
+    # --- PRODUCT BOMS ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS product_boms (
+        id SERIAL PRIMARY KEY,
+        product_item_id INTEGER UNIQUE NOT NULL REFERENCES stock_items(id) ON DELETE CASCADE,
+        customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+        total_material_cost REAL DEFAULT 0.0,
+        total_labor_cost REAL DEFAULT 0.0,
+        total_production_cost REAL DEFAULT 0.0,
+        calculated_weight REAL DEFAULT 0.0,
+        markup_percent REAL DEFAULT 0.0
+    );
+    """)
 
-        # --- BOM OPERATIONS ROUTING ---
-        conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS bom_operations (
-            id SERIAL PRIMARY KEY,
-            bom_id INTEGER NOT NULL REFERENCES product_boms(id) ON DELETE CASCADE,
-            operation_id INTEGER NOT NULL REFERENCES operations(id),
-            step_number INTEGER DEFAULT 1,
-            duration_hours REAL DEFAULT 0.0,
-            rate_applied REAL DEFAULT 0.0,
-            total_cost REAL DEFAULT 0.0
-        );
-        """))
+    # --- BOM MATERIALS ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS bom_materials (
+        id SERIAL PRIMARY KEY,
+        bom_id INTEGER NOT NULL REFERENCES product_boms(id) ON DELETE CASCADE,
+        material_item_id INTEGER NOT NULL REFERENCES stock_items(id),
+        quantity_required REAL DEFAULT 0.0,
+        unit_cost REAL DEFAULT 0.0,
+        total_cost REAL DEFAULT 0.0
+    );
+    """)
 
-        # POPULATE DEFAULT UNITS
-        res_u = conn.execute(text("SELECT COUNT(*) FROM units")).fetchone()[0]
-        if res_u == 0:
-            for c, n in [('pcs', 'Pieces'), ('kg', 'Kilograms'), ('Ml', 'Linear Meters'), ('m2', 'Square Meters'), ('l', 'Liters')]:
-                conn.execute(text("INSERT INTO units (code, name) VALUES (:c, :n) ON CONFLICT DO NOTHING"), {"c": c, "n": n})
+    # --- BOM OPERATIONS ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS bom_operations (
+        id SERIAL PRIMARY KEY,
+        bom_id INTEGER NOT NULL REFERENCES product_boms(id) ON DELETE CASCADE,
+        operation_id INTEGER NOT NULL REFERENCES operations(id),
+        step_number INTEGER DEFAULT 1,
+        duration_hours REAL DEFAULT 0.0,
+        rate_applied REAL DEFAULT 0.0,
+        total_cost REAL DEFAULT 0.0
+    );
+    """)
 
-        # POPULATE DEFAULT WAREHOUSES
-        res_w = conn.execute(text("SELECT COUNT(*) FROM warehouses")).fetchone()[0]
-        if res_w == 0:
-            for c, n, t in [('WH-MAIN', 'Main Central Warehouse', 'Internal Warehouse'), ('WH-FINISHED', 'Finished Goods Storage', 'Internal Warehouse')]:
-                conn.execute(text("INSERT INTO warehouses (code, name, location_type) VALUES (:c, :n, :t) ON CONFLICT DO NOTHING"), {"c": c, "n": n, "t": t})
+    # POPULATE DEFAULT UNITS
+    cursor.execute("SELECT COUNT(*) FROM units;")
+    if cursor.fetchone()[0] == 0:
+        for c, n in [('pcs', 'Pieces'), ('kg', 'Kilograms'), ('Ml', 'Linear Meters'), ('m2', 'Square Meters'), ('l', 'Liters')]:
+            cursor.execute("INSERT INTO units (code, name) VALUES (%s, %s) ON CONFLICT DO NOTHING;", (c, n))
 
-        auto_create_customer_warehouses_pg(conn)
+    # POPULATE DEFAULT WAREHOUSES
+    cursor.execute("SELECT COUNT(*) FROM warehouses;")
+    if cursor.fetchone()[0] == 0:
+        for c, n, t in [('WH-MAIN', 'Main Central Warehouse', 'Internal Warehouse'), ('WH-FINISHED', 'Finished Goods Storage', 'Internal Warehouse')]:
+            cursor.execute("INSERT INTO warehouses (code, name, location_type) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING;", (c, n, t))
 
-def auto_create_customer_warehouses_pg(conn):
-    custs = conn.execute(text("SELECT id, code, name FROM customers")).fetchall()
-    for c_id, c_code, c_name in custs:
-        wh_code = f"WH-CUST-{c_id:03d}"
-        wh_name = c_name.strip()
-        existing = conn.execute(text("SELECT id FROM warehouses WHERE customer_id = :cid"), {"cid": c_id}).fetchone()
-        if not existing:
-            conn.execute(text("INSERT INTO warehouses (code, name, location_type, customer_id) VALUES (:wcode, :wname, 'Customer Virtual Storage', :cid)"),
-                         {"wcode": wh_code, "wname": wh_name, "cid": c_id})
-        else:
-            conn.execute(text("UPDATE warehouses SET name = :wname WHERE id = :wid"), {"wname": wh_name, "wid": existing[0]})
+    conn.commit()
+    conn.close()
 
 def generate_unique_item_code(db_conn, category, sub_group=""):
     cursor = db_conn.cursor()
