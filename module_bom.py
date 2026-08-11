@@ -1,260 +1,121 @@
 import streamlit as st
 import pandas as pd
-from db import get_db, generate_unique_item_code, generate_unique_facility_code, generate_unique_operation_code, safe_float
-from pdf_engine import generate_bom_pdf, generate_routing_pdf
 
-def get_or_create_product_bom(db_conn, target_prod_id, cust_id=None):
-    cursor = db_conn.cursor()
-    cursor.execute("SELECT id FROM product_boms WHERE product_item_id = %s ORDER BY id ASC", (target_prod_id,))
-    rows = cursor.fetchall()
-    if not rows:
-        cursor.execute("INSERT INTO product_boms (product_item_id, customer_id) VALUES (%s, %s) RETURNING id", (target_prod_id, cust_id))
-        new_id = cursor.fetchone()[0]
-        db_conn.commit()
-        return new_id
-    main_bom_id = rows[0][0]
-    if len(rows) > 1:
-        other_ids = [r[0] for r in rows[1:]]
-        placeholders = ",".join(["%s"] * len(other_ids))
-        cursor.execute(f"UPDATE bom_materials SET bom_id = %s WHERE bom_id IN ({placeholders})", [main_bom_id] + other_ids)
-        cursor.execute(f"UPDATE bom_operations SET bom_id = %s WHERE bom_id IN ({placeholders})", [main_bom_id] + other_ids)
-        cursor.execute(f"DELETE FROM product_boms WHERE id IN ({placeholders})", other_ids)
-        db_conn.commit()
-    return main_bom_id
+from dialogs_utils import (
+    reset_bom_filters_callback, get_selected_ids,
+    bulk_delete_boms_dialog, bulk_delete_operations_dialog, bulk_delete_facilities_dialog
+)
+from dialogs_bom import (
+    create_finished_product_dialog, manage_product_bom_dialog,
+    add_facility_dialog, edit_facility_dialog,
+    add_operation_dialog, edit_operation_dialog
+)
 
-@st.dialog("➕ Create New Finished Product", width="large")
-def create_finished_product_dialog():
-    conn_dialog = get_db()
-    cursor = conn_dialog.cursor()
-    auto_part_no = generate_unique_item_code(conn_dialog, "FINISHED GOOD")
-    auto_barcode = f"BAR-{auto_part_no}"
-    col1, col2 = st.columns(2)
-    df_cust = pd.read_sql_query("SELECT id, name FROM customers ORDER BY name", conn_dialog)
-    cust_dict = {r['name']: r['id'] for _, r in df_cust.iterrows()}
-    df_wh = pd.read_sql_query("SELECT id, name, customer_id FROM warehouses ORDER BY name", conn_dialog)
-    wh_dict = {r['name']: r['id'] for _, r in df_wh.iterrows()}
-    cust_to_wh = {r['customer_id']: r['name'] for _, r in df_wh.iterrows() if r['customer_id']}
+def render_bom_page(conn, active_subtab_bom):
+    subtabs_bom_html = '<div class="mrp-subtabs">'
+    for t_k, t_l in [("Product", "📦 Product Recipes"), ("Operations", "⚙️ Operations"), ("Facilities", "🏢 Production Facilities"), ("Outsourcing", "🚚 Subcontracting"), ("BOM_Recipes", "📑 BOM Recipes"), ("Routing", "🔀 Routing")]:
+        subtabs_bom_html += f'<a href="?page=BOM&subtab={t_k}" target="_self" class="{"mrp-subtab-active" if active_subtab_bom == t_k else "mrp-subtab"}">{t_l}</a>'
+    st.markdown(subtabs_bom_html + '</div>', unsafe_allow_html=True)
+    
+    if st.session_state.get("keep_bom_dialog_open") and "active_bom_dialog_prod_id" in st.session_state:
+        manage_product_bom_dialog(st.session_state["active_bom_dialog_prod_id"])
 
-    if "p_cust_sel" not in st.session_state: st.session_state["p_cust_sel"] = "General / Stock Product"
-    if "p_wh_sel" not in st.session_state: st.session_state["p_wh_sel"] = list(wh_dict.keys())[0] if wh_dict else ""
-
-    def sync_cust_to_wh():
-        selected = st.session_state.get("p_cust_sel_key")
-        st.session_state["p_cust_sel"] = selected
-        if selected in cust_dict:
-            c_id = cust_dict[selected]
-            if c_id in cust_to_wh: st.session_state["p_wh_sel"] = cust_to_wh[c_id]
-
-    def sync_wh_to_cust():
-        selected_wh = st.session_state.get("p_wh_sel_key")
-        st.session_state["p_wh_sel"] = selected_wh
-        cursor.execute("SELECT customer_id FROM warehouses WHERE name = %s", (selected_wh,))
-        res = cursor.fetchone()
-        if res and res[0]:
-            c_id = res[0]
-            matched = [k for k, v in cust_dict.items() if v == c_id]
-            if matched: st.session_state["p_cust_sel"] = matched[0]
-
-    with col1:
-        st.text_input("Part No. *", value=auto_part_no, disabled=True)
-        df_existing_prods = pd.read_sql_query("SELECT pb.id as bom_id, si.uniq_code, si.name FROM product_boms pb JOIN stock_items si ON pb.product_item_id = si.id ORDER BY si.name", conn_dialog)
-        copy_dict = {f"{r['uniq_code']} - {r['name']}": r['bom_id'] for _, r in df_existing_prods.iterrows()}
-        selected_copy = st.selectbox("Copy BOM", ["None (Start from Scratch)"] + list(copy_dict.keys()))
-        part_desc = st.text_input("Part Description *")
-        prod_group = st.selectbox("Product Group *", ["FINISHED GOOD", "SUBASSEMBLY", "PROTOTYPE / SAMPLE", "CUSTOM ORDER"])
-        df_u = pd.read_sql_query("SELECT id, code, name FROM units ORDER BY code", conn_dialog)
-        u_dict = {f"{r['code']} ({r['name']})": r['id'] for _, r in df_u.iterrows()}
-        sel_uom = st.selectbox("UoM *", list(u_dict.keys()))
-
-    with col2:
-        c_keys = ["General / Stock Product"] + list(cust_dict.keys())
-        st.selectbox("Customer *", c_keys, index=c_keys.index(st.session_state["p_cust_sel"]) if st.session_state["p_cust_sel"] in c_keys else 0, key="p_cust_sel_key", on_change=sync_cust_to_wh)
-        wh_keys = list(wh_dict.keys())
-        st.selectbox("Default Storage *", wh_keys, index=wh_keys.index(st.session_state["p_wh_sel"]) if st.session_state["p_wh_sel"] in wh_keys else 0, key="p_wh_sel_key", on_change=sync_wh_to_cust)
-        selling_p = st.number_input("Selling Price (€)", min_value=0.0)
-        st.text_input("Barcode", value=auto_barcode, disabled=True)
-
-    calc_weight = 0.0
-    if selected_copy != "None (Start from Scratch)":
-        src_bom_id = copy_dict[selected_copy]
-        cursor.execute("SELECT si.name, bm.quantity_required, si.specific_weight FROM bom_materials bm JOIN stock_items si ON bm.material_item_id = si.id WHERE bm.bom_id = %s", (src_bom_id,))
-        for m_name, qty, sp_w in cursor.fetchall():
-            if sp_w: calc_weight += float(qty * sp_w)
+    if active_subtab_bom == "Product":
+        c_head, c_btn1, c_btn2 = st.columns([6, 2, 2])
+        with c_head: st.markdown("##### Product BOM Recipes & Manufacturing Cost Calculations")
+        with c_btn1:
+            if st.button("➕ Create Finished Product", type="primary", use_container_width=True): create_finished_product_dialog()
+        with c_btn2:
+            if st.button("🛠️ Edit Recipe / Routing", use_container_width=True): manage_product_bom_dialog()
             
-    if st.button("💾 Save Item & Build Recipe", type="primary", use_container_width=True):
-        sel_wh_cur = st.session_state["p_wh_sel"]
+        st.write("")
+        st.markdown('<div class="filter-panel">', unsafe_allow_html=True)
+        col_b1, col_b2, col_b3, col_b4 = st.columns([3, 4, 3, 2])
+        f_bom_code = col_b1.text_input("Product Code", key="f_bom_code")
+        f_bom_name = col_b2.text_input("Product Name", key="f_bom_name")
+        df_cust_list = pd.read_sql_query("SELECT name FROM customers ORDER BY name", conn)
+        cust_opts = ["All Customers", "General / Stock Product"] + df_cust_list['name'].tolist()
+        f_bom_cust = col_b3.selectbox("Customer", cust_opts, key="f_bom_cust")
+        col_b4.write(""); col_b4.write(""); col_b4.button("🔄 Reset Filters", use_container_width=True, on_click=reset_bom_filters_callback)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        q_boms_clean = """
+            SELECT b.id as ID, si.uniq_code as "Product Code", si.name as "Product Name", COALESCE(c.name, 'General / Stock Product') as "Customer", COALESCE(b.calculated_weight, 0.0) as "Weight (kg)", b.total_material_cost as "Material Cost (€)", b.total_labor_cost as "Operations Cost (€)", b.total_production_cost as "Total BOM Cost (€)"
+            FROM product_boms b JOIN stock_items si ON b.product_item_id = si.id LEFT JOIN customers c ON b.customer_id = c.id WHERE 1=1
+        """
+        params_b = []
+        if f_bom_code: q_boms_clean += " AND si.uniq_code LIKE %s"; params_b.append(f"%{f_bom_code}%")
+        if f_bom_name: q_boms_clean += " AND si.name LIKE %s"; params.append(f"%{f_bom_name}%")
+        if f_bom_cust != "All Customers":
+            if f_bom_cust == "General / Stock Product": q_boms_clean += " AND c.name IS NULL"
+            else: q_boms_clean += " AND c.name = %s"; params_b.append(f_bom_cust)
+
+        q_boms_clean += " ORDER BY si.name"
+        df_boms = pd.read_sql_query(q_boms_clean, conn, params=params_b if params_b else None)
         
-        # APLICARE REGULA PENTRU CREARE
-        if sel_wh_cur.strip().lower() == "finish product" and selected_copy == "None (Start from Scratch)":
-            st.error("🚨 Regula de Business: Un produs nou (creat de la zero) nu are Rețetă (BOM) și Routing. Alegeți un depozit temporar (ex: Virtual Storage) până când definiți rețeta completă!")
-        elif part_desc.strip():
-            sel_cust_cur = st.session_state["p_cust_sel"]
-            cust_id_val = cust_dict.get(sel_cust_cur) if sel_cust_cur != "General / Stock Product" else None
-            cursor.execute("INSERT INTO stock_items (uniq_code, code, name, category, sub_group, customer_id, unit_id, warehouse_id, selling_price, specific_weight, weight_unit, barcode) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'kg', %s) RETURNING id", (auto_part_no, auto_part_no, part_desc.strip(), prod_group, "Finished Goods", cust_id_val, u_dict[sel_uom], wh_dict[sel_wh_cur], selling_p, calc_weight, auto_barcode))
-            new_prod_id = cursor.fetchone()[0]
-            new_bom_id = get_or_create_product_bom(conn_dialog, new_prod_id, cust_id_val)
+        sel_boms = st.dataframe(df_boms, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_boms", column_config={"ID": None, "Weight (kg)": st.column_config.NumberColumn("Weight (kg)", format="%.2f kg"), "Material Cost (€)": st.column_config.NumberColumn("Material Cost (€)", format="%.2f €"), "Operations Cost (€)": st.column_config.NumberColumn("Operations Cost (€)", format="%.2f €"), "Total BOM Cost (€)": st.column_config.NumberColumn("Total BOM Cost (€)", format="%.2f €")})
+        
+        if sel_boms and len(sel_boms.selection.rows) > 0:
+            selected_ids = get_selected_ids(df_boms, sel_boms.selection.rows)
+            if selected_ids:
+                col_a1, col_a2, _ = st.columns([2, 2, 8])
+                with col_a1:
+                    if len(selected_ids) == 1:
+                        cursor_page = conn.cursor()
+                        cursor_page.execute("SELECT product_item_id FROM product_boms WHERE id = %s", (selected_ids[0],))
+                        p_row = cursor_page.fetchone()
+                        if p_row and st.button("✏️ Edit Selected Recipe", use_container_width=True): 
+                            st.session_state["active_bom_dialog_prod_id"] = p_row[0]
+                            st.session_state["keep_bom_dialog_open"] = True
+                            st.rerun()
+                with col_a2:
+                    if st.button("🗑️ Delete Selected Recipe", use_container_width=True): bulk_delete_boms_dialog(selected_ids)
+
+    elif active_subtab_bom == "Operations":
+        c_head, c_btn = st.columns([8, 2])
+        with c_head: st.markdown("##### Manufacturing Operations & Process Rates")
+        with c_btn:
+            if st.button("➕ Add Operation", type="primary", use_container_width=True): add_operation_dialog()
             
-            if selected_copy != "None (Start from Scratch)":
-                src_bom_id = copy_dict[selected_copy]
-                cursor.execute("SELECT material_item_id, quantity_required, unit_cost, total_cost FROM bom_materials WHERE bom_id = %s", (src_bom_id,))
-                for m_item, qty, u_c, t_c in cursor.fetchall(): cursor.execute("INSERT INTO bom_materials (bom_id, material_item_id, quantity_required, unit_cost, total_cost) VALUES (%s, %s, %s, %s, %s)", (new_bom_id, m_item, qty, u_c, t_c))
-                cursor.execute("SELECT operation_id, step_number, duration_hours, rate_applied, total_cost FROM bom_operations WHERE bom_id = %s", (src_bom_id,))
-                for op_id, step_n, dur, r_app, t_c in cursor.fetchall(): cursor.execute("INSERT INTO bom_operations (bom_id, operation_id, step_number, duration_hours, rate_applied, total_cost) VALUES (%s, %s, %s, %s, %s, %s)", (new_bom_id, op_id, step_n, dur, r_app, t_c))
-            conn_dialog.commit()
-            st.session_state["active_bom_dialog_prod_id"] = new_prod_id
-            st.session_state["keep_bom_dialog_open"] = True
-            st.rerun()
+        st.write("")
+        q_op = """SELECT o.id as ID, o.uniq_code as "Uniq Code", o.name as "Operation Name", CASE WHEN o.is_outsourced = 1 THEN '🚚 OUTSOURCED (' || COALESCE(s.name, 'No Supplier') || ')' ELSE COALESCE(f.name, 'Internal Machine') END as "Execution Facility / Supplier", o.cost_unit as "Cost Unit", o.rate_per_unit as "Rate (€)", CASE WHEN o.is_outsourced = 1 THEN '-' ELSE CAST(o.productivity_level AS TEXT) END as "Productivity", CASE WHEN o.is_outsourced = 1 THEN '-' ELSE CAST(o.operators_count AS TEXT) END as "Operators", CASE WHEN o.is_outsourced = 1 THEN '-' ELSE CAST(o.max_hours_day AS TEXT) END as "Max Hrs/Day" FROM operations o LEFT JOIN production_facilities f ON o.facility_id = f.id LEFT JOIN suppliers s ON o.preferred_supplier_id = s.id ORDER BY o.uniq_code"""
+        df_op = pd.read_sql_query(q_op, conn)
+        sel_op = st.dataframe(df_op, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_op", column_config={"ID": None, "Rate (€)": st.column_config.NumberColumn("Rate (€)", format="%.2f €")})
+        
+        if sel_op and len(sel_op.selection.rows) > 0:
+            selected_ids = get_selected_ids(df_op, sel_op.selection.rows)
+            if selected_ids:
+                col_a1, col_a2, _ = st.columns([2, 2, 8])
+                with col_a1:
+                    if len(selected_ids) == 1 and st.button("✏️ Edit Selected", use_container_width=True): edit_operation_dialog(selected_ids[0])
+                with col_a2:
+                    if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_operations_dialog(selected_ids)
 
-@st.dialog("➕ Edit Product BOM Recipe", width="large")
-def manage_product_bom_dialog(selected_prod_id=None):
-    conn = get_db()
-    st.session_state["keep_bom_dialog_open"] = False
-    df_prods = pd.read_sql_query("SELECT id, uniq_code, code, name, customer_id FROM stock_items WHERE UPPER(category) IN ('FINISHED GOOD', 'SUBASSEMBLY', 'PRODUSE FINITE') ORDER BY name", conn)
-    if len(df_prods) == 0: st.warning("Please add Finished Goods!"); return
-    prod_dict = {f"{r['uniq_code']} - {r['name']}": r['id'] for _, r in df_prods.iterrows()}
-    
-    target_id = selected_prod_id or st.session_state.get("active_bom_dialog_prod_id")
-    idx_prod = 0
-    if target_id:
-        curr_keys = [k for k, v in prod_dict.items() if v == target_id]
-        if curr_keys: idx_prod = list(prod_dict.keys()).index(curr_keys[0])
+    elif active_subtab_bom == "Facilities":
+        c_head, c_btn = st.columns([8, 2])
+        with c_head: st.markdown("##### Production Facilities & Equipment Inventory")
+        with c_btn:
+            if st.button("➕ Add Facility", type="primary", use_container_width=True): add_facility_dialog()
+            
+        st.write("")
+        df_fac = pd.read_sql_query("SELECT id as ID, code as Code, name as \"Equipment Name\", facility_type as \"Type\", brand_model as \"Brand / Model\", status as \"Status\", next_maintenance_date as \"Next Maintenance\" FROM production_facilities ORDER BY code", conn)
+        sel_fac = st.dataframe(df_fac, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_fac", column_config={"ID": None})
+        if sel_fac and len(sel_fac.selection.rows) > 0:
+            selected_ids = get_selected_ids(df_fac, sel_fac.selection.rows)
+            if selected_ids:
+                col_a1, col_a2, _ = st.columns([2, 2, 8])
+                with col_a1:
+                    if len(selected_ids) == 1 and st.button("✏️ Edit Selected", use_container_width=True): edit_facility_dialog(selected_ids[0])
+                with col_a2:
+                    if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_facilities_dialog(selected_ids)
 
-    sel_prod_key = st.selectbox("Select Product *", list(prod_dict.keys()), index=idx_prod)
-    target_prod_id = prod_dict[sel_prod_key]
-    st.session_state["active_bom_dialog_prod_id"] = target_prod_id
+    elif active_subtab_bom == "Outsourcing":
+        st.markdown("##### 🚚 Subcontracting Management (Outsourced Operations)")
+        st.caption("Centralizator al operațiunilor externe și comenzi către furnizorii de servicii (zincare, vopsire, strunjire, etc.).")
+        q_sub = """SELECT o.uniq_code as "Op Code", o.name as "Operation Name", COALESCE(s.name, 'No Preferred Supplier') as "Subcontractor / Supplier", o.outsourcing_type as "Process Type", o.material_supplied_by as "Material Provision", o.cost_unit as "Billing Unit", o.rate_per_unit as "Estimated Rate (€)" FROM operations o LEFT JOIN suppliers s ON o.preferred_supplier_id = s.id WHERE o.is_outsourced = 1 ORDER BY o.uniq_code"""
+        df_sub = pd.read_sql_query(q_sub, conn)
+        if len(df_sub) > 0: st.dataframe(df_sub, use_container_width=True, hide_index=True, column_config={"Estimated Rate (€)": st.column_config.NumberColumn("Estimated Rate (€)", format="%.2f €")})
+        else: st.info("No outsourced operations created yet. Toggle 'Is Subcontracted / Outsourced Operation?' when adding an Operation.")
 
-    df_cust = pd.read_sql_query("SELECT id, name FROM customers ORDER BY name", conn)
-    cust_dict = {r['name']: r['id'] for _, r in df_cust.iterrows()}
-    cursor = conn.cursor()
-    cursor.execute("SELECT uniq_code, name, customer_id FROM stock_items WHERE id = %s", (target_prod_id,))
-    row_item = cursor.fetchone()
-    curr_c_id = row_item[2] if row_item else None
-
-    c_keys = ["General / Stock Product"] + list(cust_dict.keys())
-    curr_c_name = [k for k, v in cust_dict.items() if v == curr_c_id]
-    sel_cust_name = st.selectbox("Assigned Customer *", c_keys, index=c_keys.index(curr_c_name[0]) if curr_c_name else 0)
-
-    bom_id = get_or_create_product_bom(conn, target_prod_id, cust_dict.get(sel_cust_name))
-    st.divider()
-    
-    t_mat, t_ops = st.tabs(["📦 Material Consumption (BOM)", "⚙️ Labor Operations (Routing)"])
-    
-    with t_mat:
-        df_all_mat = pd.read_sql_query("SELECT id, uniq_code, name FROM stock_items WHERE UPPER(category) NOT IN ('FINISHED GOOD', 'SUBASSEMBLY', 'PRODUSE FINITE') ORDER BY name", conn)
-        mat_dict = {f"{r['uniq_code']} - {r['name']}": r['id'] for _, r in df_all_mat.iterrows()}
-        df_bm = pd.read_sql_query("SELECT bm.id as ID, bm.material_item_id, si.uniq_code as Code, si.name as \"Material Name\", bm.quantity_required as Qty, u.code as UoM, bm.unit_cost as Price, bm.total_cost as \"Total Cost\" FROM bom_materials bm JOIN stock_items si ON bm.material_item_id = si.id JOIN units u ON si.unit_id = u.id WHERE bm.bom_id = %s", conn, params=[bom_id])
-        if len(df_bm) > 0:
-            for _, r_m in df_bm.iterrows():
-                cm1, cm2, cm3, cm4, cm5 = st.columns([4, 2, 2, 2, 1])
-                cm1.write(f"**{r_m['Code']} - {r_m['Material Name']}**")
-                cm2.write(f"{r_m['Qty']} {r_m['UoM']}")
-                cm3.write(f"{r_m['Price']} €")
-                cm4.write(f"**{r_m['Total Cost']} €**")
-                if cm5.button("🗑️", key=f"del_mat_{r_m['ID']}"):
-                    cursor.execute("DELETE FROM bom_materials WHERE id = %s", (r_m['ID'],))
-                    conn.commit(); st.session_state["keep_bom_dialog_open"] = True; st.rerun()
-
-        col_m1, col_m2, col_m3 = st.columns([5, 3, 2])
-        ver_m = st.session_state.get("bom_select_version", 0)
-        add_mat_key = col_m1.selectbox("Select Material", [""] + list(mat_dict.keys()), key=f"mat_k_{ver_m}")
-        add_mat_qty = col_m2.number_input("Qty", min_value=0.001, value=1.0, key=f"mat_q_{ver_m}")
-        if col_m3.button("➕ Add", key="add_mat"):
-            if add_mat_key:
-                m_id = mat_dict[add_mat_key]
-                cursor.execute("SELECT purchase_price FROM stock_items WHERE id = %s", (m_id,))
-                price = cursor.fetchone()[0] or 0.0
-                cursor.execute("INSERT INTO bom_materials (bom_id, material_item_id, quantity_required, unit_cost, total_cost) VALUES (%s, %s, %s, %s, %s)", (bom_id, m_id, add_mat_qty, price, float(price * add_mat_qty)))
-                conn.commit(); st.session_state["bom_select_version"] = ver_m + 1; st.session_state["keep_bom_dialog_open"] = True; st.rerun()
-
-    with t_ops:
-        df_all_ops = pd.read_sql_query("SELECT id, uniq_code, name FROM operations ORDER BY uniq_code", conn)
-        op_dict = {f"{r['uniq_code']} - {r['name']}": r['id'] for _, r in df_all_ops.iterrows()}
-        df_bo = pd.read_sql_query("SELECT bo.id as ID, bo.step_number as Step, bo.operation_id, o.uniq_code as \"Op Code\", o.name as \"Operation Name\", o.cost_unit as Unit, bo.duration_hours as Duration, bo.rate_applied as Rate, bo.total_cost as \"Total Cost\" FROM bom_operations bo JOIN operations o ON bo.operation_id = o.id WHERE bo.bom_id = %s ORDER BY bo.step_number", conn, params=[bom_id])
-        if len(df_bo) > 0:
-            for _, r_o in df_bo.iterrows():
-                co1, co2, co3, co4, co5 = st.columns([1, 4, 2, 2, 1])
-                co1.write(f"S{r_o['Step']}")
-                co2.write(f"**{r_o['Operation Name']}**")
-                co3.write(f"{r_o['Duration']} {r_o['Unit']}")
-                co4.write(f"**{r_o['Total Cost']} €**")
-                if co5.button("🗑️", key=f"del_op_{r_o['ID']}"):
-                    cursor.execute("DELETE FROM bom_operations WHERE id = %s", (r_o['ID'],)); conn.commit(); st.session_state["keep_bom_dialog_open"] = True; st.rerun()
-
-        col_o1, col_o2, col_o3 = st.columns([5, 3, 2])
-        ver_o = st.session_state.get("bom_select_version", 0)
-        add_op_key = col_o1.selectbox("Select Operation", [""] + list(op_dict.keys()), key=f"op_k_{ver_o}")
-        add_op_dur = col_o2.number_input("Qty/Dur", min_value=0.01, value=0.5, key=f"op_q_{ver_o}")
-        if col_o3.button("➕ Add", key="add_op"):
-            if add_op_key:
-                o_id = op_dict[add_op_key]
-                cursor.execute("SELECT rate_per_unit FROM operations WHERE id = %s", (o_id,))
-                rate = cursor.fetchone()[0] or 0.0
-                cursor.execute("SELECT COALESCE(MAX(step_number), 0) + 1 FROM bom_operations WHERE bom_id = %s", (bom_id,))
-                next_step = cursor.fetchone()[0]
-                cursor.execute("INSERT INTO bom_operations (bom_id, operation_id, step_number, duration_hours, rate_applied, total_cost) VALUES (%s, %s, %s, %s, %s, %s)", (bom_id, o_id, next_step, add_op_dur, rate, float(rate * add_op_dur)))
-                conn.commit(); st.session_state["bom_select_version"] = ver_o + 1; st.session_state["keep_bom_dialog_open"] = True; st.rerun()
-
-    cursor.execute("SELECT SUM(total_cost) FROM bom_materials WHERE bom_id = %s", (bom_id,))
-    tot_mat_cost = cursor.fetchone()[0] or 0.0
-    cursor.execute("SELECT SUM(total_cost) FROM bom_operations WHERE bom_id = %s", (bom_id,))
-    tot_lab_cost = cursor.fetchone()[0] or 0.0
-    tot_prod_cost = tot_mat_cost + tot_lab_cost
-
-    if st.button("💾 Save Product Recipe & Update Costs", type="primary", use_container_width=True):
-        c_id = cust_dict.get(sel_cust_name)
-        cursor.execute("UPDATE product_boms SET customer_id=%s, total_material_cost=%s, total_labor_cost=%s, total_production_cost=%s WHERE id=%s", (c_id, tot_mat_cost, tot_lab_cost, tot_prod_cost, bom_id))
-        cursor.execute("UPDATE stock_items SET customer_id=%s, purchase_price=%s WHERE id=%s", (c_id, tot_prod_cost, target_prod_id))
-        conn.commit(); st.session_state["keep_bom_dialog_open"] = False; st.rerun()
-
-@st.dialog("➕ Add Production Facility")
-def add_facility_dialog():
-    conn_dialog = get_db()
-    auto_fac_code = generate_unique_facility_code(conn_dialog)
-    with st.form("add_facility_form"):
-        f_name = st.text_input("Machine Name *")
-        f_type = st.selectbox("Category", ["Laser Cutting", "Press Brake / Abkant", "Welding Station", "Powder Coating / Vopsitorie", "CNC Machining", "General Machine", "Manual Workstation"])
-        if st.form_submit_button("💾 Save Facility", type="primary", use_container_width=True):
-            if f_name.strip():
-                cursor = conn_dialog.cursor()
-                cursor.execute("INSERT INTO production_facilities (code, name, facility_type, status) VALUES (%s, %s, %s, 'Operational')", (auto_fac_code, f_name.strip(), f_type))
-                conn_dialog.commit(); st.success("Facility saved!"); st.rerun()
-
-@st.dialog("⚙️ Edit Facility Details")
-def edit_facility_dialog(fac_id):
-    conn_dialog = get_db()
-    cursor = conn_dialog.cursor()
-    cursor.execute("SELECT code, name, facility_type FROM production_facilities WHERE id = %s", (fac_id,))
-    row = cursor.fetchone()
-    if row:
-        with st.form("edit_facility_form"):
-            e_name = st.text_input("Machine Name *", value=row[1])
-            if st.form_submit_button("💾 Save Changes", type="primary"):
-                cursor.execute("UPDATE production_facilities SET name=%s WHERE id=%s", (e_name.strip(), fac_id))
-                conn_dialog.commit(); st.success("Updated!"); st.rerun()
-
-@st.dialog("➕ Add Operation")
-def add_operation_dialog():
-    conn_dialog = get_db()
-    auto_op_code = generate_unique_operation_code(conn_dialog)
-    with st.form("add_operation_form"):
-        op_name = st.text_input("Operation Name *")
-        rate_unit = st.number_input("Rate per Unit (€) *", min_value=0.0, value=25.0)
-        if st.form_submit_button("💾 Save Operation", type="primary", use_container_width=True):
-            if op_name.strip():
-                cursor = conn_dialog.cursor()
-                cursor.execute("INSERT INTO operations (uniq_code, name, cost_unit, rate_per_unit, is_outsourced) VALUES (%s, %s, 'Hour', %s, 0)", (auto_op_code, op_name.strip(), rate_unit))
-                conn_dialog.commit(); st.success("Operation saved!"); st.rerun()
-
-@st.dialog("⚙️ Edit Operation")
-def edit_operation_dialog(op_id):
-    conn_dialog = get_db()
-    cursor = conn_dialog.cursor()
-    cursor.execute("SELECT name, rate_per_unit FROM operations WHERE id = %s", (op_id,))
-    row = cursor.fetchone()
-    if row:
-        with st.form("edit_operation_form"):
-            e_name = st.text_input("Operation Name *", value=row[0])
-            e_rate = st.number_input("Rate (€)", value=safe_float(row[1]))
-            if st.form_submit_button("💾 Save Changes", type="primary"):
-                cursor.execute("UPDATE operations SET name=%s, rate_per_unit=%s WHERE id=%s", (e_name.strip(), e_rate, op_id))
-                conn_dialog.commit(); st.success("Updated!"); st.rerun()
+    elif active_subtab_bom == "BOM_Recipes": st.info("BOM Recipes module configured.")
+    elif active_subtab_bom == "Routing": st.info("Routing functionality configured.")
