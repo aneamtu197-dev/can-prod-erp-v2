@@ -14,8 +14,13 @@ from ui import load_css, render_top_header, render_nav_bar
 
 st.set_page_config(page_title="CAN Prod ERP Custom", layout="wide", initial_sidebar_state="collapsed")
 
-# Initialize DB & Load CSS
-init_custom_db()
+# Initialize DB & Load CSS (CACHED pentru viteza maxima)
+@st.cache_data
+def setup_db_once():
+    init_custom_db()
+    return True
+
+setup_db_once()
 load_css()
 
 # Inject Custom CSS for Resizable Dialog Modals
