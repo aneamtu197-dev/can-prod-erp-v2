@@ -2,10 +2,8 @@ import streamlit as st
 import pandas as pd
 
 from db import import_mrpeasy_customers
-from dialogs import (
-    get_selected_ids, bulk_delete_customers_dialog,
-    add_customer_dialog, edit_customer_dialog
-)
+from dialogs_utils import get_selected_ids, bulk_delete_customers_dialog
+from dialogs_partners import add_customer_dialog, edit_customer_dialog
 
 def render_rfq_page(conn, active_subtab_rfq):
     subtabs_rfq_html = '<div class="mrp-subtabs">'
