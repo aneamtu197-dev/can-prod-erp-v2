@@ -1446,7 +1446,7 @@ elif active_page == "Stock":
                 with col_a2:
                     if st.button("🗑️ Delete Selected", use_container_width=True): bulk_delete_stock_dialog(selected_ids)
 
- elif active_subtab == "Suppliers":
+    elif active_subtab == "Suppliers":
         c_head, c_btn = st.columns([8, 2])
         with c_head: st.markdown("##### Supplier Management")
         with c_btn:
