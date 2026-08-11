@@ -8,7 +8,7 @@ def add_warehouse_dialog():
     with st.form("add_wh_form"):
         st.subheader("New Warehouse Details")
         w_code = st.text_input("Warehouse Code *", placeholder="e.g. WH-001")
-        w_name = st.text_input("Warehouse Name *", placeholder="e.g. Depozit Central")
+        w_name = st.text_input("Warehouse Name *", placeholder="e.g. Finish Product")
         w_loc = st.selectbox("Location Type", ["Internal Warehouse", "Customer Virtual Storage", "External / Third Party"])
         
         if st.form_submit_button("💾 Save Warehouse", type="primary", use_container_width=True):
@@ -95,7 +95,10 @@ def add_new_item_dialog(default_type="Raw Material"):
             min_stock_qty = st.number_input("Reorder Point", min_value=0.0)
 
         if st.form_submit_button("💾 Save Item", type="primary", use_container_width=True):
-            if auto_uniq and name:
+            # APLICARE REGULA: Un produs absolut nou nu are rețetă!
+            if selected_w.strip().lower() == "finish product":
+                st.error("🚨 Regula de Business: Un articol nou nu are încă Rețetă (BOM) și Routing definite. Vă rugăm să alegeți alt depozit temporar până la definirea completă a rețetei!")
+            elif auto_uniq and name:
                 cursor = conn_dialog.cursor()
                 cursor.execute("SELECT id FROM stock_items WHERE code = %s OR name = %s", (code.strip(), name.strip()))
                 if cursor.fetchone(): st.warning("⚠️ Item exists!")
@@ -153,10 +156,25 @@ def edit_item_dialog(item_id):
 
             c_save, c_del = st.columns([8, 2])
             if c_save.form_submit_button("💾 Save Changes", type="primary", use_container_width=True):
-                s_id = s_dict.get(selected_s) if selected_s != "No Supplier" else None
-                c_id = c_dict.get(selected_c) if selected_c != "General / Stock" else None
-                cursor.execute("""UPDATE stock_items SET code=%s, name=%s, sub_group=%s, supplier_id=%s, customer_id=%s, unit_id=%s, warehouse_id=%s, purchase_price=%s, selling_price=%s, specific_weight=%s, weight_unit=%s, current_stock=%s, min_stock=%s WHERE id=%s""", 
-                               (e_code, e_name, e_sub, s_id, c_id, u_dict.get(selected_u), w_dict.get(selected_w), e_pprice, e_sprice, e_sweight, e_wunit, e_stock, e_minstock, item_id))
-                conn_dialog.commit(); st.success("Updated!"); st.rerun()
+                can_save = True
+                
+                # APLICARE REGULA: Verificare BOM și Routing
+                if selected_w.strip().lower() == "finish product":
+                    cursor.execute("SELECT COUNT(bm.id) FROM bom_materials bm JOIN product_boms pb ON bm.bom_id = pb.id WHERE pb.product_item_id = %s", (item_id,))
+                    mat_count = cursor.fetchone()[0]
+                    cursor.execute("SELECT COUNT(bo.id) FROM bom_operations bo JOIN product_boms pb ON bo.bom_id = pb.id WHERE pb.product_item_id = %s", (item_id,))
+                    op_count = cursor.fetchone()[0]
+                    
+                    if mat_count == 0 or op_count == 0:
+                        st.error("🚨 Regula de Business: Acest produs nu are Rețetă (BOM) sau Routing complet. Este necesar minim un material și o operațiune pentru a intra în depozitul 'Finish Product'!")
+                        can_save = False
+
+                if can_save:
+                    s_id = s_dict.get(selected_s) if selected_s != "No Supplier" else None
+                    c_id = c_dict.get(selected_c) if selected_c != "General / Stock" else None
+                    cursor.execute("""UPDATE stock_items SET code=%s, name=%s, sub_group=%s, supplier_id=%s, customer_id=%s, unit_id=%s, warehouse_id=%s, purchase_price=%s, selling_price=%s, specific_weight=%s, weight_unit=%s, current_stock=%s, min_stock=%s WHERE id=%s""", 
+                                   (e_code, e_name, e_sub, s_id, c_id, u_dict.get(selected_u), w_dict.get(selected_w), e_pprice, e_sprice, e_sweight, e_wunit, e_stock, e_minstock, item_id))
+                    conn_dialog.commit(); st.success("Updated!"); st.rerun()
+
             if c_del.form_submit_button("🗑️ Delete", use_container_width=True):
                 cursor.execute("DELETE FROM stock_items WHERE id = %s", (item_id,)); conn_dialog.commit(); st.success("Deleted!"); st.rerun()
