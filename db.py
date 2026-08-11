@@ -8,7 +8,8 @@ import math
 # ==========================================
 def get_db():
     DATABASE_URL = "postgresql://postgres:gWJ8uOkdgotCKmC7@db.ptdkpxkftfnmtigzpttj.supabase.co:5432/postgres"
-    return psycopg2.connect(DATABASE_URL)
+    # Adăugăm sslmode='require' (obligatoriu pentru Supabase din exterior)
+    return psycopg2.connect(DATABASE_URL, sslmode='require')
 
 def safe_float(val):
     if val is None or pd.isna(val):
