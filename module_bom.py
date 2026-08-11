@@ -1,9 +1,11 @@
 import streamlit as st
 import pandas as pd
 
-from dialogs import (
+from dialogs_utils import (
     reset_bom_filters_callback, get_selected_ids,
-    bulk_delete_boms_dialog, bulk_delete_operations_dialog, bulk_delete_facilities_dialog,
+    bulk_delete_boms_dialog, bulk_delete_operations_dialog, bulk_delete_facilities_dialog
+)
+from dialogs_bom import (
     create_finished_product_dialog, manage_product_bom_dialog,
     add_facility_dialog, edit_facility_dialog,
     add_operation_dialog, edit_operation_dialog
