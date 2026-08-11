@@ -76,13 +76,14 @@ def reset_fg_filters_callback():
 def reset_bom_filters_callback():
     for k in ["f_bom_code", "f_bom_name", "f_bom_cust"]: st.session_state[k] = "All Customers" if "cust" in k else ""
 
-# HELPER TO SAFE EXTRACT IDS
+# HELPER TO SAFE EXTRACT IDS (FIXAT PENTRU KEYERROR 'ID')
 def get_selected_ids(df, selected_rows):
     valid_ids = []
     if selected_rows:
+        col_name = 'ID' if 'ID' in df.columns else ('id' if 'id' in df.columns else df.columns[0])
         for idx in selected_rows:
             if 0 <= idx < len(df):
-                valid_ids.append(int(df.iloc[idx]['ID']))
+                valid_ids.append(int(df.iloc[idx][col_name]))
     return valid_ids
 
 # DIALOG MODALS FOR BULK DELETE
@@ -197,7 +198,7 @@ def add_warehouse_dialog():
             else:
                 st.warning("Complete missing fields!")
 
-@st.dialog("✏️ Edit / Delete Warehouse")
+@st.dialog("⚙️ Gestionare Depozit")
 def edit_warehouse_dialog(wh_id):
     conn_dialog = get_db()
     cursor = conn_dialog.cursor()
@@ -205,17 +206,17 @@ def edit_warehouse_dialog(wh_id):
     row = cursor.fetchone()
     if row:
         with st.form("edit_wh_form"):
-            e_code = st.text_input("Code (Read-Only) *", value=row[0], disabled=True)
-            e_name = st.text_input("Name *", value=row[1])
+            e_code = st.text_input("Cod (Doar citire) *", value=row[0], disabled=True)
+            e_name = st.text_input("Nume Depozit *", value=row[1])
             loc_opts = ["Internal Warehouse", "Customer Virtual Storage", "External / Third Party"]
-            e_loc = st.selectbox("Location Type", loc_opts, index=loc_opts.index(row[2]) if row[2] in loc_opts else 0)
+            e_loc = st.selectbox("Tip Depozit", loc_opts, index=loc_opts.index(row[2]) if row[2] in loc_opts else 0)
             
             st.write("")
-            c_save, c_del = st.columns([8, 2])
-            if c_save.form_submit_button("💾 Save", type="primary", use_container_width=True):
+            c_save, c_del = st.columns([7, 3])
+            if c_save.form_submit_button("💾 Salvează Modificările", type="primary", use_container_width=True):
                 cursor.execute("UPDATE warehouses SET name=%s, location_type=%s WHERE id=%s", (e_name.strip(), e_loc, wh_id))
                 conn_dialog.commit(); st.success("Updated!"); st.rerun()
-            if c_del.form_submit_button("🗑️ Delete", use_container_width=True):
+            if c_del.form_submit_button("🗑️ Șterge Depozitul", use_container_width=True):
                 cursor.execute("SELECT count(id) FROM stock_items WHERE warehouse_id = %s", (wh_id,))
                 if cursor.fetchone()[0] > 0:
                     st.error("🚨 Eroare: Există materiale asociate cu acest depozit! Nu îl poți șterge.")
