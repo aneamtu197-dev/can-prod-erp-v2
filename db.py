@@ -24,7 +24,7 @@ def get_db():
         st.stop()
 
 def init_custom_db():
-    """Creează structura de tabele în Supabase PostgreSQL nativ."""
+    """Creează și actualizează structura de tabele în Supabase PostgreSQL nativ."""
     conn = get_db()
     cursor = conn.cursor()
 
@@ -138,9 +138,12 @@ def init_custom_db():
         current_stock REAL DEFAULT 0.0,
         min_stock REAL DEFAULT 0.0,
         customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
-        barcode VARCHAR(100)
+        barcode VARCHAR(100),
+        dropbox_link VARCHAR(500)
     );
     """)
+    # Asigurăm adăugarea coloanei dropbox_link dacă tabelul exista deja (evităm erorile)
+    cursor.execute("ALTER TABLE stock_items ADD COLUMN IF NOT EXISTS dropbox_link VARCHAR(500);")
 
     # --- PRODUCT BOMS ---
     cursor.execute("""
@@ -181,6 +184,68 @@ def init_custom_db():
     );
     """)
 
+    # ==========================================
+    # NOI TABELE PENTRU COMENZI (SALES & PURCHASE) + DROPBOX
+    # ==========================================
+
+    # --- SALES ORDERS (COMENZI DE LA CLIENȚI) ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS sales_orders (
+        id SERIAL PRIMARY KEY,
+        order_number VARCHAR(50) UNIQUE NOT NULL,
+        customer_id INTEGER REFERENCES customers(id) ON DELETE RESTRICT,
+        status VARCHAR(50) DEFAULT 'Draft',
+        order_date DATE DEFAULT CURRENT_DATE,
+        delivery_date DATE,
+        dropbox_folder VARCHAR(500),
+        total_value REAL DEFAULT 0.0,
+        created_by VARCHAR(100) DEFAULT 'System'
+    );
+    """)
+
+    # --- SALES ORDER ITEMS (LINIILE DE COMANDĂ CLIENT) ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS sales_order_items (
+        id SERIAL PRIMARY KEY,
+        sales_order_id INTEGER REFERENCES sales_orders(id) ON DELETE CASCADE,
+        product_item_id INTEGER REFERENCES stock_items(id) ON DELETE RESTRICT,
+        quantity REAL DEFAULT 1.0,
+        unit_price REAL DEFAULT 0.0,
+        total_price REAL DEFAULT 0.0
+    );
+    """)
+
+    # --- PURCHASE ORDERS (COMENZI ACHIZIȚII CĂTRE FURNIZORI) ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS purchase_orders (
+        id SERIAL PRIMARY KEY,
+        po_number VARCHAR(50) UNIQUE NOT NULL,
+        supplier_id INTEGER REFERENCES suppliers(id) ON DELETE RESTRICT,
+        status VARCHAR(50) DEFAULT 'Draft',
+        order_date DATE DEFAULT CURRENT_DATE,
+        delivery_date DATE,
+        dropbox_folder VARCHAR(500),
+        total_value REAL DEFAULT 0.0,
+        created_by VARCHAR(100) DEFAULT 'System'
+    );
+    """)
+
+    # --- PURCHASE ORDER ITEMS (LINIILE DE COMANDĂ FURNIZOR) ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS purchase_order_items (
+        id SERIAL PRIMARY KEY,
+        purchase_order_id INTEGER REFERENCES purchase_orders(id) ON DELETE CASCADE,
+        material_item_id INTEGER REFERENCES stock_items(id) ON DELETE RESTRICT,
+        quantity REAL DEFAULT 1.0,
+        unit_price REAL DEFAULT 0.0,
+        total_price REAL DEFAULT 0.0
+    );
+    """)
+
+    # ==========================================
+    # POPULARE DEFAULT DATA
+    # ==========================================
+
     # POPULATE DEFAULT UNITS
     cursor.execute("SELECT COUNT(*) FROM units;")
     if cursor.fetchone()[0] == 0:
@@ -195,6 +260,10 @@ def init_custom_db():
 
     conn.commit()
     conn.close()
+
+# ==========================================
+# GENERATOARE UNICE DE CODURI
+# ==========================================
 
 def generate_unique_item_code(db_conn, category, sub_group=""):
     cursor = db_conn.cursor()
@@ -257,6 +326,36 @@ def generate_unique_operation_code(db_conn):
                 max_num = max(max_num, int(num_part))
     next_num = max_num + 1
     return f"OP-{next_num:04d}"
+
+def generate_unique_sales_order_code(db_conn):
+    cursor = db_conn.cursor()
+    cursor.execute("SELECT order_number FROM sales_orders WHERE order_number LIKE 'SO-%'")
+    rows = cursor.fetchall()
+    max_num = 0
+    for (c_val,) in rows:
+        if c_val and c_val.startswith('SO-'):
+            num_part = c_val.replace('SO-', '')
+            if num_part.isdigit():
+                max_num = max(max_num, int(num_part))
+    next_num = max_num + 1
+    return f"SO-{next_num:04d}"
+
+def generate_unique_purchase_order_code(db_conn):
+    cursor = db_conn.cursor()
+    cursor.execute("SELECT po_number FROM purchase_orders WHERE po_number LIKE 'PO-%'")
+    rows = cursor.fetchall()
+    max_num = 0
+    for (c_val,) in rows:
+        if c_val and c_val.startswith('PO-'):
+            num_part = c_val.replace('PO-', '')
+            if num_part.isdigit():
+                max_num = max(max_num, int(num_part))
+    next_num = max_num + 1
+    return f"PO-{next_num:04d}"
+
+# ==========================================
+# IMPORT LOGIC & CLEANING
+# ==========================================
 
 def clean_and_classify_item(part_no, desc, group_num):
     text_upper = f"{part_no} {desc}".upper()
