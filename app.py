@@ -822,7 +822,7 @@ def manage_product_bom_dialog(selected_prod_id=None):
         mat_options_keys = list(mat_dict.keys())
 
         q_bm = """
-            SELECT bm.id as ID, bm.material_item_id, si.uniq_code as 'Code', si.name as 'Material Name', bm.quantity_required as 'Qty', u.code as 'UoM', bm.unit_cost as 'Price', bm.total_cost as 'Total Cost'
+            SELECT bm.id as ID, bm.material_item_id, si.uniq_code as "Code", si.name as "Material Name", bm.quantity_required as "Qty", u.code as "UoM", bm.unit_cost as "Price", bm.total_cost as "Total Cost"
             FROM bom_materials bm
             JOIN stock_items si ON bm.material_item_id = si.id
             JOIN units u ON si.unit_id = u.id
@@ -895,7 +895,7 @@ def manage_product_bom_dialog(selected_prod_id=None):
         op_options_keys = list(op_dict.keys())
         
         q_bo = """
-            SELECT bo.id as ID, bo.step_number as Step, bo.operation_id, o.uniq_code as 'Op Code', o.name as 'Operation Name', o.cost_unit as 'Unit', bo.duration_hours as 'Duration', bo.rate_applied as 'Rate', bo.total_cost as 'Total Cost'
+            SELECT bo.id as ID, bo.step_number as Step, bo.operation_id, o.uniq_code as "Op Code", o.name as "Operation Name", o.cost_unit as "Unit", bo.duration_hours as "Duration", bo.rate_applied as "Rate", bo.total_cost as "Total Cost"
             FROM bom_operations bo
             JOIN operations o ON bo.operation_id = o.id
             WHERE bo.bom_id = %s
@@ -1319,7 +1319,7 @@ elif active_page == "Stock":
         col_f6.write(""); col_f6.write(""); col_f6.button("🔄 Reset Filters", use_container_width=True, on_click=reset_raw_filters_callback)
         st.markdown('</div>', unsafe_allow_html=True)
 
-        q_raw = "SELECT si.id as ID, si.uniq_code as 'Uniq Code', si.code as 'Part No.', si.name as 'Description', si.sub_group as 'Sub-Group', s.name as 'Supplier', u.code as 'UoM', si.specific_weight as 'Spec. Weight', si.purchase_price as 'Purchase Price (€)' FROM stock_items si LEFT JOIN suppliers s ON si.supplier_id = s.id LEFT JOIN units u ON si.unit_id = u.id WHERE UPPER(si.category) IN ('RAW MATERIAL', 'MATERIE PRIMA', 'RAW MATERIALS')"
+        q_raw = "SELECT si.id as ID, si.uniq_code as \"Uniq Code\", si.code as \"Part No.\", si.name as \"Description\", si.sub_group as \"Sub-Group\", s.name as \"Supplier\", u.code as \"UoM\", si.specific_weight as \"Spec. Weight\", si.purchase_price as \"Purchase Price (€)\" FROM stock_items si LEFT JOIN suppliers s ON si.supplier_id = s.id LEFT JOIN units u ON si.unit_id = u.id WHERE UPPER(si.category) IN ('RAW MATERIAL', 'MATERIE PRIMA', 'RAW MATERIALS')"
         params = []
         if f_raw_code: q_raw += " AND (si.code LIKE %s OR si.uniq_code LIKE %s)"; params.extend([f"%{f_raw_code}%", f"%{f_raw_code}%"])
         if f_raw_name: q_raw += " AND si.name LIKE %s"; params.append(f"%{f_raw_name}%")
@@ -1354,7 +1354,7 @@ elif active_page == "Stock":
         col_b4.write(""); col_b4.write(""); col_b4.button("🔄 Reset", use_container_width=True, on_click=reset_buy_filters_callback)
         st.markdown('</div>', unsafe_allow_html=True)
 
-        q_buy = "SELECT si.id as ID, si.uniq_code as 'Uniq Code', si.code as 'Part No.', si.name as 'Description', s.name as 'Supplier', u.code as 'UoM', si.purchase_price as 'Purchase Price (€)' FROM stock_items si LEFT JOIN suppliers s ON si.supplier_id = s.id LEFT JOIN units u ON si.unit_id = u.id WHERE UPPER(si.category) IN ('BUY PART', 'BUY PARTS')"
+        q_buy = "SELECT si.id as ID, si.uniq_code as \"Uniq Code\", si.code as \"Part No.\", si.name as \"Description\", s.name as \"Supplier\", u.code as \"UoM\", si.purchase_price as \"Purchase Price (€)\" FROM stock_items si LEFT JOIN suppliers s ON si.supplier_id = s.id LEFT JOIN units u ON si.unit_id = u.id WHERE UPPER(si.category) IN ('BUY PART', 'BUY PARTS')"
         params = []
         if f_buy_code: q_buy += " AND (si.code LIKE %s OR si.uniq_code LIKE %s)"; params.extend([f"%{f_buy_code}%", f"%{f_buy_code}%"])
         if f_buy_name: q_buy += " AND si.name LIKE %s"; params.append(f"%{f_buy_name}%")
@@ -1393,16 +1393,16 @@ elif active_page == "Stock":
         q_fin = """
             SELECT 
                 si.id as ID, 
-                si.uniq_code as 'Uniq Code', 
-                si.name as 'Description', 
-                si.category as 'Category', 
-                COALESCE(c.name, 'General / Stock') as 'Assigned Customer',
-                w.name as 'Virtual Storage Location',
-                u.code as 'UoM', 
-                si.specific_weight as 'Weight (kg)',
-                si.purchase_price as 'BOM Cost (€)',
-                si.selling_price as 'Selling Price (€)',
-                si.barcode as 'Barcode'
+                si.uniq_code as "Uniq Code", 
+                si.name as "Description", 
+                si.category as "Category", 
+                COALESCE(c.name, 'General / Stock') as "Assigned Customer",
+                w.name as "Virtual Storage Location",
+                u.code as "UoM", 
+                si.specific_weight as "Weight (kg)",
+                si.purchase_price as "BOM Cost (€)",
+                si.selling_price as "Selling Price (€)",
+                si.barcode as "Barcode"
             FROM stock_items si 
             LEFT JOIN units u ON si.unit_id = u.id 
             LEFT JOIN customers c ON si.customer_id = c.id
@@ -1440,7 +1440,7 @@ elif active_page == "Stock":
             if st.button("➕ Add Supplier", type="primary", use_container_width=True): add_supplier_dialog()
         
         st.write("")
-        df_s = pd.read_sql_query("SELECT id as ID, code as Code, cui as 'CUI', name as 'Supplier Name', supplier_type as 'Supplier Type', contact_person as 'Contact Person', phone as Phone, email as Email, lead_time_days as 'Lead Time (Days)' FROM suppliers ORDER BY name", conn)
+        df_s = pd.read_sql_query("SELECT id as ID, code as Code, cui as \"CUI\", name as \"Supplier Name\", supplier_type as \"Supplier Type\", contact_person as \"Contact Person\", phone as Phone, email as Email, lead_time_days as \"Lead Time (Days)\" FROM suppliers ORDER BY name", conn)
         sel_supp = st.dataframe(df_s, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_supp", column_config={"ID": None})
         
         if sel_supp and len(sel_supp.selection.rows) > 0:
@@ -1456,7 +1456,7 @@ elif active_page == "Stock":
 
     elif active_subtab == "Warehouses":
         st.markdown("##### Warehouses & Customer Virtual Storage")
-        df_w = pd.read_sql_query("SELECT w.id as ID, w.name as 'Warehouse Name', w.location_type as Type, COALESCE(c.name, 'Internal') as 'Owner Customer' FROM warehouses w LEFT JOIN customers c ON w.customer_id = c.id", conn)
+        df_w = pd.read_sql_query("SELECT w.id as ID, w.name as \"Warehouse Name\", w.location_type as Type, COALESCE(c.name, 'Internal') as \"Owner Customer\" FROM warehouses w LEFT JOIN customers c ON w.customer_id = c.id", conn)
         st.dataframe(df_w, use_container_width=True, hide_index=True)
         
     elif active_subtab == "Units":
@@ -1505,13 +1505,13 @@ elif active_page == "BOM":
         q_boms_clean = """
             SELECT 
                 b.id as ID,
-                si.uniq_code as 'Product Code',
-                si.name as 'Product Name',
-                COALESCE(c.name, 'General / Stock Product') as 'Customer',
-                COALESCE(b.calculated_weight, 0.0) as 'Weight (kg)',
-                b.total_material_cost as 'Material Cost (€)',
-                b.total_labor_cost as 'Operations Cost (€)',
-                b.total_production_cost as 'Total BOM Cost (€)'
+                si.uniq_code as "Product Code",
+                si.name as "Product Name",
+                COALESCE(c.name, 'General / Stock Product') as "Customer",
+                COALESCE(b.calculated_weight, 0.0) as "Weight (kg)",
+                b.total_material_cost as "Material Cost (€)",
+                b.total_labor_cost as "Operations Cost (€)",
+                b.total_production_cost as "Total BOM Cost (€)"
             FROM product_boms b
             JOIN stock_items si ON b.product_item_id = si.id
             LEFT JOIN customers c ON b.customer_id = c.id
@@ -1575,17 +1575,17 @@ elif active_page == "BOM":
         q_op = """
             SELECT 
                 o.id as ID,
-                o.uniq_code as 'Uniq Code',
-                o.name as 'Operation Name',
+                o.uniq_code as "Uniq Code",
+                o.name as "Operation Name",
                 CASE 
                     WHEN o.is_outsourced = 1 THEN '🚚 OUTSOURCED (' || COALESCE(s.name, 'No Supplier') || ')'
                     ELSE COALESCE(f.name, 'Internal Machine')
-                END as 'Execution Facility / Supplier',
-                o.cost_unit as 'Cost Unit',
-                o.rate_per_unit as 'Rate (€)',
-                CASE WHEN o.is_outsourced = 1 THEN '-' ELSE CAST(o.productivity_level AS TEXT) END as 'Productivity',
-                CASE WHEN o.is_outsourced = 1 THEN '-' ELSE CAST(o.operators_count AS TEXT) END as 'Operators',
-                CASE WHEN o.is_outsourced = 1 THEN '-' ELSE CAST(o.max_hours_day AS TEXT) END as 'Max Hrs/Day'
+                END as "Execution Facility / Supplier",
+                o.cost_unit as "Cost Unit",
+                o.rate_per_unit as "Rate (€)",
+                CASE WHEN o.is_outsourced = 1 THEN '-' ELSE CAST(o.productivity_level AS TEXT) END as "Productivity",
+                CASE WHEN o.is_outsourced = 1 THEN '-' ELSE CAST(o.operators_count AS TEXT) END as "Operators",
+                CASE WHEN o.is_outsourced = 1 THEN '-' ELSE CAST(o.max_hours_day AS TEXT) END as "Max Hrs/Day"
             FROM operations o
             LEFT JOIN production_facilities f ON o.facility_id = f.id
             LEFT JOIN suppliers s ON o.preferred_supplier_id = s.id
@@ -1619,7 +1619,7 @@ elif active_page == "BOM":
             if st.button("➕ Add Facility", type="primary", use_container_width=True): add_facility_dialog()
             
         st.write("")
-        df_fac = pd.read_sql_query("SELECT id as ID, code as Code, name as 'Equipment Name', facility_type as 'Type', brand_model as 'Brand / Model', status as 'Status', next_maintenance_date as 'Next Maintenance' FROM production_facilities ORDER BY code", conn)
+        df_fac = pd.read_sql_query("SELECT id as ID, code as Code, name as \"Equipment Name\", facility_type as \"Type\", brand_model as \"Brand / Model\", status as \"Status\", next_maintenance_date as \"Next Maintenance\" FROM production_facilities ORDER BY code", conn)
         sel_fac = st.dataframe(df_fac, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_fac", column_config={"ID": None})
         
         if sel_fac and len(sel_fac.selection.rows) > 0:
@@ -1640,13 +1640,13 @@ elif active_page == "BOM":
         
         q_sub = """
             SELECT 
-                o.uniq_code as 'Op Code',
-                o.name as 'Operation Name',
-                COALESCE(s.name, 'No Preferred Supplier') as 'Subcontractor / Supplier',
-                o.outsourcing_type as 'Process Type',
-                o.material_supplied_by as 'Material Provision',
-                o.cost_unit as 'Billing Unit',
-                o.rate_per_unit as 'Estimated Rate (€)'
+                o.uniq_code as "Op Code",
+                o.name as "Operation Name",
+                COALESCE(s.name, 'No Preferred Supplier') as "Subcontractor / Supplier",
+                o.outsourcing_type as "Process Type",
+                o.material_supplied_by as "Material Provision",
+                o.cost_unit as "Billing Unit",
+                o.rate_per_unit as "Estimated Rate (€)"
             FROM operations o
             LEFT JOIN suppliers s ON o.preferred_supplier_id = s.id
             WHERE o.is_outsourced = 1
@@ -1688,7 +1688,7 @@ elif active_page == "RFQ":
                     st.success(f"Added: {ins}, Updated: {upd}"); st.rerun()
             
         st.write("")
-        df_c = pd.read_sql_query("SELECT id as ID, code as Code, cui as 'CUI', name as 'Customer Name', reg_com as 'Reg. Com.', contact_person as 'Contact Person', phone as Phone, email as Email FROM customers ORDER BY name", conn)
+        df_c = pd.read_sql_query("SELECT id as ID, code as Code, cui as \"CUI\", name as \"Customer Name\", reg_com as \"Reg. Com.\", contact_person as \"Contact Person\", phone as Phone, email as Email FROM customers ORDER BY name", conn)
         
         sel_cust = st.dataframe(df_c, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="t_cust", column_config={"ID": None})
         
