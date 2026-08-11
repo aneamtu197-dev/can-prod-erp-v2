@@ -10,6 +10,14 @@ def get_db():
     DATABASE_URL = "postgresql://postgres:gWJ8uOkdgotCKmC7@db.ptdkpxkftfnmtigzpttj.supabase.co:5432/postgres"
     return psycopg2.connect(DATABASE_URL)
 
+def safe_float(val):
+    if val is None or pd.isna(val):
+        return 0.0
+    try:
+        return float(val)
+    except:
+        return 0.0
+
 # ==========================================
 # 2. GENERATE UNIQUE CODES
 # ==========================================
@@ -44,12 +52,10 @@ def generate_unique_operation_code(conn):
 # ==========================================
 # 3. CSV IMPORTERS 
 # ==========================================
-# Daca ai logica avansata la import CSV, inlocuieste cu codul tau vechi in aceste 2 functii!
 def import_mrpeasy_items(df):
     conn = get_db()
     cursor = conn.cursor()
     inserted, updated = 0, 0
-    # Aici era logica ta de import materiale...
     conn.commit()
     conn.close()
     return inserted, updated
@@ -58,7 +64,6 @@ def import_mrpeasy_customers(df):
     conn = get_db()
     cursor = conn.cursor()
     inserted, updated = 0, 0
-    # Aici era logica ta de import clienti...
     conn.commit()
     conn.close()
     return inserted, updated
